@@ -37,6 +37,7 @@ declare global {
     clearCachedPlaylist?: () => void;
     togglePlay?: () => void;
     toNewSong?: () => void;
+    toPrevSong?: () => void;
     play?: (url: string) => void;
     bindSettingsUI?: () => void;
     updateUiSettings?: () => void;
@@ -99,6 +100,8 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
     return el ? (el as HTMLInputElement).value : "";
   }
 
+  var isNavigatingHistory = false;
+  var historyCursor = 0;
   var playItem;
   var playlistdata = [];
   var matchedData = [];
@@ -3267,12 +3270,71 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
         }
 
         if (playmode === 1) {
+          isNavigatingHistory = false;
+          historyCursor = 0;
           playAdjacentTrack("next");
         } else if (playmode === 3) {
-          randomPlay();
+          // 随机模式下：如果当前处于历史导航中，优先向后播放历史中的下一首
+          if (isNavigatingHistory && historyCursor > 0) {
+            const nextHistoryIndex = historyCursor - 1;
+            historyCursor = nextHistoryIndex;
+            // 如果已经回到最新歌曲 (index 0)，退出历史导航状态（但仍播放 index 0）
+            if (historyCursor === 0) {
+              isNavigatingHistory = false;
+            }
+            const targetSong = historyPlaylist[historyCursor];
+            play(mainFilePath + targetSong.fn, undefined, true);
+          } else {
+            // 没有更新的历史了，正常生成一首全新的随机歌曲
+            isNavigatingHistory = false;
+            historyCursor = 0;
+            randomPlay();
+          }
         }
       }
       window.toNewSong = toNewSong;
+
+      function toPrevSong() {
+        if (playmode === 0) {
+          stopPlay();
+          return;
+        }
+
+        emitPlayerUiEvent('track-loading', { isTrackLoading: true });
+        if (songName) {
+          songName.innerHTML =
+            t('player.loadingSong', null, 'Loading song ...') +
+            ' <span class="spinner-border text-primary" role="status" aria-hidden="true" style="border-width: 4px;"></span>';
+        }
+
+        if (playmode === 2) {
+          if (pendingUrl) {
+            play(pendingUrl);
+          } else {
+            playAdjacentTrack("prev");
+          }
+          return;
+        }
+
+        if (playmode === 1) {
+          playAdjacentTrack("prev");
+        } else if (playmode === 3) {
+          const nextHistoryIndex = historyCursor + 1;
+          if (historyPlaylist && historyPlaylist[nextHistoryIndex]) {
+            isNavigatingHistory = true;
+            historyCursor = nextHistoryIndex;
+            const targetSong = historyPlaylist[nextHistoryIndex];
+            play(mainFilePath + targetSong.fn, undefined, true);
+          } else {
+            if (pendingUrl) {
+              play(pendingUrl);
+            } else {
+              playAdjacentTrack("prev");
+            }
+          }
+        }
+      }
+      window.toPrevSong = toPrevSong;
       function loop() {
         if (startTime || isNativeMode || isChiptune3Mode) {
           if (isNativeMode) {
@@ -3487,6 +3549,145 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
     }
 
     togglePlayImpl = togglePlay;
+
+    // ── Media Session API 集成 ──
+    if (typeof window !== 'undefined' && 'mediaSession' in navigator) {
+      // 使用无声 Wav Base64 维持音频会话（Audio Focus）防止 Web Audio 暂停后失去焦点
+      const silentAudioUrl = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAAA";
+      let silentAudio: HTMLAudioElement | null = null;
+      try {
+        silentAudio = new Audio(silentAudioUrl);
+        silentAudio.loop = true;
+      } catch (e) {
+        console.warn("Failed to create silent Audio object", e);
+      }
+
+      const mediaSessionSeek = (timeInSeconds: number) => {
+        if (!isTrackReady) return;
+        if (isChiptune3Mode && chiptune3Player) {
+          var dur = chiptune3Player.getDuration() || 0;
+          var pct = dur > 0 ? (timeInSeconds / dur) * 100 : 0;
+          if (progressBar) progressBar.value = String(pct);
+          chiptune3Player.seek(timeInSeconds);
+          emitPlayerUiEvent('progress-change', { progress: pct, isScrubbing: false });
+        } else if (isNativeMode && nativeAudioEl) {
+          nativeAudioEl.currentTime = timeInSeconds;
+          var dur = nativeAudioEl.duration || 0;
+          var pct = dur > 0 ? (timeInSeconds / dur) * 100 : 0;
+          if (progressBar) progressBar.value = String(pct);
+          emitPlayerUiEvent('progress-change', { progress: pct, isScrubbing: false });
+        } else {
+          // tracker 模式
+          var dur = window.__playerUiState?.durationSeconds || 0;
+          if (dur > 0) {
+            var pct = (timeInSeconds / dur) * 100;
+            if (progressBar) progressBar.value = String(pct);
+            var songPos = Math.floor((songLength * pct) / 100 / patternLength);
+            BassoonTracker.setCurrentSongPosition(songPos);
+            emitPlayerUiEvent("progress-change", { progress: pct, isScrubbing: false });
+            emitTimeUpdateFromProgress(pct, false);
+          }
+        }
+      };
+
+      try {
+        navigator.mediaSession.setActionHandler('play', () => {
+          if (silentAudio) {
+            silentAudio.play().catch(() => {});
+          }
+          if (window.togglePlay) window.togglePlay();
+          navigator.mediaSession.playbackState = 'playing';
+        });
+        navigator.mediaSession.setActionHandler('pause', () => {
+          if (silentAudio) {
+            silentAudio.pause();
+          }
+          if (window.togglePlay) window.togglePlay();
+          navigator.mediaSession.playbackState = 'paused';
+        });
+        navigator.mediaSession.setActionHandler('previoustrack', () => {
+          if (window.toPrevSong) window.toPrevSong();
+        });
+        navigator.mediaSession.setActionHandler('nexttrack', () => {
+          if (window.toNewSong) window.toNewSong();
+        });
+        navigator.mediaSession.setActionHandler('seekto', (details) => {
+          if (typeof details.seekTime === 'number') {
+            mediaSessionSeek(details.seekTime);
+          }
+        });
+        navigator.mediaSession.setActionHandler('seekforward', (details) => {
+          const offset = details.seekOffset || 10;
+          const current = window.__playerUiState?.elapsedSeconds || 0;
+          const duration = window.__playerUiState?.durationSeconds || 0;
+          const target = Math.min(duration, current + offset);
+          mediaSessionSeek(target);
+        });
+        navigator.mediaSession.setActionHandler('seekbackward', (details) => {
+          const offset = details.seekOffset || 10;
+          const current = window.__playerUiState?.elapsedSeconds || 0;
+          const target = Math.max(0, current - offset);
+          mediaSessionSeek(target);
+        });
+      } catch (error) {
+        console.warn("Failed to set Media Session action handlers:", error);
+      }
+
+      const updateMediaSessionMetadata = (title: string, artist: string) => {
+        navigator.mediaSession.metadata = new MediaMetadata({
+          title: title || 'Unknown Title',
+          artist: artist || 'Unknown Artist',
+          album: 'ModFM Tracker Player',
+          artwork: [
+            { src: '/cover.png', sizes: '1024x1024', type: 'image/png' }
+          ]
+        });
+      };
+
+      window.addEventListener('player:track-change', (e: any) => {
+        const detail = e.detail || {};
+        const title = detail.songTitle || detail.fileName || '';
+        updateMediaSessionMetadata(title, '');
+      });
+
+      window.addEventListener('player:track-meta', (e: any) => {
+        const detail = e.detail || {};
+        const title = detail.title || window.__playerUiState?.songTitle || window.__playerUiState?.fileName || '';
+        const artist = detail.artist || '';
+        updateMediaSessionMetadata(title, artist);
+      });
+
+      window.addEventListener('player:play-state', (e: any) => {
+        const detail = e.detail || {};
+        navigator.mediaSession.playbackState = detail.isPlaying ? 'playing' : 'paused';
+        if (silentAudio) {
+          if (detail.isPlaying) {
+            silentAudio.play().catch(() => {});
+          } else {
+            silentAudio.pause();
+          }
+        }
+      });
+
+      window.addEventListener('player:time-update', (e: any) => {
+        const detail = e.detail || {};
+        const duration = detail.durationSeconds || 0;
+        const position = detail.elapsedSeconds || 0;
+        if (duration > 0 && position >= 0 && position <= duration) {
+          if ('setPositionState' in navigator.mediaSession) {
+            try {
+              navigator.mediaSession.setPositionState({
+                duration: duration,
+                playbackRate: 1.0,
+                position: position
+              });
+            } catch (err) {
+              // Ignore errors for invalid states
+            }
+          }
+        }
+      });
+    }
 
     function stopPlay() {
       if (isChiptune3Mode && chiptune3Player) {
@@ -4492,6 +4693,12 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
     }
 
     function addToHistory(filename) {
+      if (isNavigatingHistory) {
+        if (fmusicListActive === 2) {
+          renderHistoryPlaylist();
+        }
+        return;
+      }
       historyPlaylist = historyPlaylist.filter((item) => item.fn !== filename);
       historyPlaylist.unshift({ fn: filename, time: new Date().getTime() });
       if (historyPlaylist.length > 99) {
@@ -4733,7 +4940,11 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
     }
   }
 
-  function play(url, trackId?) {
+  function play(url, trackId?, fromHistoryNav = false) {
+    if (!fromHistoryNav) {
+      isNavigatingHistory = false;
+      historyCursor = 0;
+    }
     oppChange = 0;
     oppRepet = 0;
     autoPlay = true;
