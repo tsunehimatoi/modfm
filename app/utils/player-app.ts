@@ -78,41 +78,9 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
     return safeJsonParse(value, fallback);
   }
 
-  var mediaStreamDest: MediaStreamAudioDestinationNode | null = null;
-  var mediaStreamAudio: HTMLAudioElement | null = null;
-
-  if (typeof window !== "undefined") {
-    try {
-      mediaStreamAudio = document.createElement('audio');
-      mediaStreamAudio.style.display = 'none';
-      document.body.appendChild(mediaStreamAudio);
-    } catch (e) {
-      console.warn("Failed to pre-create mediaStreamAudio:", e);
-    }
-  }
-
-  function unlockMediaStreamAudio() {
-    if (mediaStreamAudio && mediaStreamAudio.paused) {
-      mediaStreamAudio.play().catch(() => {});
-    }
-  }
-
-  function ensureMediaStreamCapture(ctx: AudioContext) {
-    if (!mediaStreamDest && ctx && typeof ctx.createMediaStreamDestination === 'function') {
-      try {
-        mediaStreamDest = ctx.createMediaStreamDestination();
-        if (mediaStreamAudio) {
-          mediaStreamAudio.srcObject = mediaStreamDest.stream;
-        }
-      } catch (err) {
-        console.warn("Failed to bind AudioContext to MediaStream:", err);
-      }
-    }
-  }
-
   let togglePlayImpl: (() => void) | undefined;
+  let startMediaBridgeImpl: ((url?: string) => void) | undefined;
   window.togglePlay = () => {
-    unlockMediaStreamAudio();
     if (togglePlayImpl) {
       togglePlayImpl();
     } else {
@@ -1675,7 +1643,8 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
         null,
         "Sorry<br>Your browser does not support WebAudio.<br>Supported browsers are Chrome, Firefox, Safari, and Edge",
       );
-
+    } else {
+      // var demoMod = "../demomods/StardustMemories.mod";
 
       var startTime;
       var wasPlaying;
@@ -1766,7 +1735,7 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
               for (var i = 0; i < len; i++) {
                 this.phase += step;
                 if (this.phase > Math.PI * 2) this.phase -= Math.PI * 2;
-                
+
                 var phaseRatio = this.phase / (2 * Math.PI);
                 var pos = phaseRatio * pcmLen;
                 var idx = Math.floor(pos);
@@ -1888,12 +1857,7 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
             };
             processNode.connect(normGainNode);
             normGainNode.connect(gainNode);
-            ensureMediaStreamCapture(ctx);
-            if (mediaStreamDest) {
-              gainNode.connect(mediaStreamDest);
-            } else {
-              gainNode.connect(ctx.destination);
-            }
+            gainNode.connect(ctx.destination);
             gainNode.connect(analyser); // scope reads post-user-volume
             processNode.connect(measurerNode); // RMS measurement pre-gain
             fireEvent('onInitialized');
@@ -2373,12 +2337,7 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
             // src → measurerNode                            (RMS pre-gain)
             src.connect(normGainNode);
             normGainNode.connect(gainNode);
-            ensureMediaStreamCapture(ctx);
-            if (mediaStreamDest) {
-              gainNode.connect(mediaStreamDest);
-            } else {
-              gainNode.connect(ctx.destination);
-            }
+            gainNode.connect(ctx.destination);
             gainNode.connect(analyser);
             src.connect(measurerNode);
           }
@@ -2866,6 +2825,7 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
       bindSettingsUI();
 
       playButton.onclick = function () {
+        if (startMediaBridgeImpl) startMediaBridgeImpl();
         autoPlay = true;
         if (!firstplay) {
           const initialTrack = getTrackFromLocation();
@@ -3239,12 +3199,7 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
       // and interpose btNormGainNode for loudness normalization.
       BassoonTracker.audio.cutOffVolume.disconnect();
       BassoonTracker.audio.cutOffVolume.connect(btNormGainNode);
-      ensureMediaStreamCapture(ctx);
-      if (mediaStreamDest) {
-        btNormGainNode.connect(mediaStreamDest);
-      } else {
-        btNormGainNode.connect(ctx.destination);
-      }
+      btNormGainNode.connect(ctx.destination);
       // Scope analyser reads post-AGC signal (shows normalized output)
       btNormGainNode.connect(analyser);
       // RMS measurer reads pre-AGC signal (raw source level)
@@ -3599,7 +3554,102 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
 
     // ── Media Session API 集成 ──
     if (typeof window !== 'undefined' && 'mediaSession' in navigator) {
+      // 动态生成一个 10 秒的正规静音 WAV 音频，用于在移动端稳定维持 Audio Focus。
+      // Chrome/Safari 不会对极短且空的 Base64 data URI 或 MediaStream 激活 Media Session，
+      // 所以我们必须向 <audio> 提供一个具备合法时长的真实静音音频 Blob。
+      function generateSilentWavUrl() {
+        try {
+          var sampleRate = 8000;
+          var duration = 10; // 10 秒
+          var numSamples = sampleRate * duration;
+          var dataSize = numSamples * 2; // 16-bit
+          var buffer = new ArrayBuffer(44 + dataSize);
+          var v = new DataView(buffer);
+          function ws(offset: number, str: string) {
+            for (var i = 0; i < str.length; i++) v.setUint8(offset + i, str.charCodeAt(i));
+          }
+          ws(0, 'RIFF');
+          v.setUint32(4, 36 + dataSize, true);
+          ws(8, 'WAVE');
+          ws(12, 'fmt ');
+          v.setUint32(16, 16, true);
+          v.setUint16(20, 1, true); // PCM
+          v.setUint16(22, 1, true); // Mono
+          v.setUint32(24, sampleRate, true);
+          v.setUint32(28, sampleRate * 2, true); // ByteRate
+          v.setUint16(32, 2, true); // BlockAlign
+          v.setUint16(34, 16, true); // BitsPerSample
+          ws(36, 'data');
+          v.setUint32(40, dataSize, true);
+          // 填充近静音数据（振幅 1，物理输出不可闻，但保留数字信号）
+          for (var i = 0; i < numSamples; i++) {
+            v.setInt16(44 + i * 2, 1, true);
+          }
+          var blob = new Blob([buffer], { type: 'audio/wav' });
+          return URL.createObjectURL(blob);
+        } catch (e) {
+          console.warn("Failed to generate silent WAV", e);
+          return "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAAA";
+        }
+      }
 
+      let silentAudio: HTMLAudioElement | null = null;
+      try {
+        silentAudio = document.createElement('audio');
+        silentAudio.src = generateSilentWavUrl();
+        silentAudio.loop = true;
+        silentAudio.setAttribute('playsinline', '');
+        silentAudio.setAttribute('webkit-playsinline', '');
+        // 隐藏在文档中，绝对定位以避免影响布局，但不设为 display:none 阻止浏览器挂起它
+        silentAudio.style.position = 'fixed';
+        silentAudio.style.left = '-9999px';
+        silentAudio.style.top = '-9999px';
+        silentAudio.style.width = '1px';
+        silentAudio.style.height = '1px';
+        silentAudio.style.opacity = '0.01';
+        silentAudio.style.pointerEvents = 'none';
+        document.body.appendChild(silentAudio);
+      } catch (e) {
+        console.warn("Failed to create silent Audio object", e);
+      }
+
+      var mediaBridgePlaying = false;
+      const startMediaBridge = (url?: string) => {
+        // 如果传入了 url，判定是否属于 native 原生格式
+        if (url) {
+          var ext = url.substring(url.lastIndexOf('.') + 1).toLowerCase().split('?')[0];
+          if (NATIVE_AUDIO_EXTS.has(ext)) {
+            stopMediaBridge();
+            return;
+          }
+        } else {
+          if (isNativeMode) {
+            stopMediaBridge();
+            return;
+          }
+        }
+
+        if (!silentAudio || mediaBridgePlaying) return;
+        var p = silentAudio.play();
+        if (p) {
+          p.then(function () {
+            mediaBridgePlaying = true;
+            console.log('[MediaBridge] Active');
+          }).catch(function (e) {
+            console.warn('[MediaBridge] Play rejected:', e);
+          });
+        }
+      };
+
+      const stopMediaBridge = () => {
+        if (!silentAudio || !mediaBridgePlaying) return;
+        silentAudio.pause();
+        mediaBridgePlaying = false;
+        console.log('[MediaBridge] Paused');
+      };
+
+      // 绑定到外层作用域，供用户手势同步调用
+      startMediaBridgeImpl = startMediaBridge;
 
       const mediaSessionSeek = (timeInSeconds: number) => {
         if (!isTrackReady) return;
@@ -3631,16 +3681,12 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
 
       try {
         navigator.mediaSession.setActionHandler('play', () => {
-          if (mediaStreamAudio) {
-            mediaStreamAudio.play().catch(() => {});
-          }
+          startMediaBridge();
           if (window.togglePlay) window.togglePlay();
           navigator.mediaSession.playbackState = 'playing';
         });
         navigator.mediaSession.setActionHandler('pause', () => {
-          if (mediaStreamAudio) {
-            mediaStreamAudio.pause();
-          }
+          stopMediaBridge();
           if (window.togglePlay) window.togglePlay();
           navigator.mediaSession.playbackState = 'paused';
         });
@@ -3672,13 +3718,272 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
         console.warn("Failed to set Media Session action handlers:", error);
       }
 
+      const generateAsciiArtworkImage = (title: string, artist: string): string => {
+        if (typeof document === 'undefined') return '/cover.png';
+        const canvas = document.createElement('canvas');
+        canvas.width = 1024;
+        canvas.height = 1024;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return '/cover.png';
+
+        // 单词折行算法 (高清字体单行允许更多字符)
+        const wrapTextToLines = (text: string, maxCharsPerLine = 14): string[] => {
+          const clean = (text || 'Unknown').trim();
+          const words = clean.split(/\s+/).filter(Boolean);
+          const lines: string[] = [];
+          let currentLine = "";
+
+          for (const word of words) {
+            if (word.length > maxCharsPerLine) {
+              if (currentLine) {
+                lines.push(currentLine);
+                currentLine = "";
+              }
+              lines.push(word);
+              continue;
+            }
+            if (currentLine === "") {
+              currentLine = word;
+            } else if (currentLine.length + 1 + word.length <= maxCharsPerLine) {
+              currentLine += " " + word;
+            } else {
+              lines.push(currentLine);
+              currentLine = word;
+            }
+          }
+          if (currentLine) {
+            lines.push(currentLine);
+          }
+          return lines.slice(0, 3); // 最多 3 行大字，保证舒适留白
+        };
+
+        // 1. 获取当前播放器的主题颜色 (从 #scope 元素计算)
+        let themeStart = '#3b82f6';
+        let themeEnd = '#8b5cf6';
+        let waveformColor = '#16a34a';
+        const scopeEl = document.getElementById('scope');
+        if (scopeEl) {
+          try {
+            const computedStyle = window.getComputedStyle(scopeEl);
+            themeStart = computedStyle.getPropertyValue('--scope-spectrum-start').trim() || themeStart;
+            themeEnd = computedStyle.getPropertyValue('--scope-spectrum-end').trim() || themeEnd;
+            waveformColor = computedStyle.getPropertyValue('--scope-waveform').trim() || waveformColor;
+          } catch (e) {
+            // Ignore error
+          }
+        }
+
+        // 2. 绘制深色高科技背景
+        const bgGrad = ctx.createRadialGradient(512, 512, 20, 512, 512, 720);
+        bgGrad.addColorStop(0, '#0f172a'); // slate-900
+        bgGrad.addColorStop(1, '#020617'); // slate-950
+        ctx.fillStyle = bgGrad;
+        ctx.fillRect(0, 0, 1024, 1024);
+
+        // 绘制复古扫描网格
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.012)';
+        ctx.lineWidth = 1.5;
+        for (let i = 0; i < 1024; i += 32) {
+          ctx.beginPath();
+          ctx.moveTo(i, 0);
+          ctx.lineTo(i, 1024);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(0, i);
+          ctx.lineTo(1024, i);
+          ctx.stroke();
+        }
+
+        // 3. 绘制 Siri 风格的电子交织正弦波形背景
+        ctx.save();
+        ctx.lineWidth = 3;
+        ctx.globalAlpha = 0.12;
+
+        // 绘制第一条正弦波 (themeStart)
+        ctx.strokeStyle = themeStart;
+        ctx.beginPath();
+        for (let x = 0; x <= 1024; x += 10) {
+          const y = 390 + Math.sin(x * 0.008) * 110 + Math.cos(x * 0.015) * 40;
+          if (x === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+
+        // 绘制第二条余弦波 (waveformColor)
+        ctx.strokeStyle = waveformColor;
+        ctx.beginPath();
+        for (let x = 0; x <= 1024; x += 10) {
+          const y = 390 + Math.cos(x * 0.007) * 90 + Math.sin(x * 0.012) * 50;
+          if (x === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+        ctx.restore();
+
+        // 4. 精确折行并计算自适应缩放字号
+        const safeTitle = (title || 'Unknown').trim();
+        const textLines = wrapTextToLines(safeTitle, 14);
+        const numLines = textLines.length;
+
+        ctx.save();
+        const baseFontSize = 120; // 放大基准字号
+        ctx.font = `italic 900 ${baseFontSize}px "Arial Black", "Impact", "Outfit", "Inter", sans-serif`;
+
+        // 测量最大宽度
+        let maxLineWidth = 0;
+        for (let i = 0; i < numLines; i++) {
+          const w = ctx.measureText(textLines[i]).width;
+          if (w > maxLineWidth) maxLineWidth = w;
+        }
+
+        const targetMaxWidth = 920; // 增加显示边界
+        const targetMaxHeight = 420;
+        const lineSpacing = baseFontSize * 1.25;
+        const baseHeight = numLines * lineSpacing;
+
+        const scaleX = targetMaxWidth / maxLineWidth;
+        const scaleY = targetMaxHeight / baseHeight;
+        let scale = Math.min(scaleX, scaleY);
+
+        // 限制最大字号为 140px，防止极短歌名被放得太大
+        const maxScale = 140 / baseFontSize;
+        if (scale > maxScale) scale = maxScale;
+
+        const finalFontSize = Math.floor(baseFontSize * scale);
+        const finalLineSpacing = finalFontSize * 1.25;
+        const actualTotalHeight = numLines * finalLineSpacing;
+
+        ctx.font = `italic 900 ${finalFontSize}px "Arial Black", "Impact", "Outfit", "Inter", sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+
+        // 计算纵向精确居中的起始 Y 坐标
+        const centerY = 390;
+        const startY = centerY - (actualTotalHeight / 2) + (finalFontSize / 2);
+
+        const extrusionDepth = Math.max(4, Math.floor(finalFontSize * 0.12)); // 3D 厚度
+
+        const sideGrad = ctx.createLinearGradient(120, 200, 900, 600);
+        sideGrad.addColorStop(0, themeStart + '77'); // 77 代表 45% 透明度
+        sideGrad.addColorStop(0.5, themeEnd + '77');
+        sideGrad.addColorStop(1, waveformColor + '77');
+
+        const textGrad = ctx.createLinearGradient(120, 200, 900, 600);
+        textGrad.addColorStop(0, themeStart);
+        textGrad.addColorStop(0.5, themeEnd);
+        textGrad.addColorStop(1, waveformColor);
+
+        // 绘制 3D 投影侧壁 (从后往前)
+        ctx.strokeStyle = 'rgba(2, 6, 23, 0.5)'; // 侧壁层叠暗描边，增加 3D 层次结构
+        ctx.lineWidth = 3;
+        ctx.lineJoin = 'round';
+        for (let d = extrusionDepth; d > 0; d--) {
+          ctx.save();
+          // 在最底层绘制时，叠加一层极为柔和的黑色大阴影，产生悬浮立体感
+          if (d === extrusionDepth) {
+            ctx.shadowColor = 'rgba(2, 6, 23, 0.95)';
+            ctx.shadowBlur = 24;
+            ctx.shadowOffsetX = 12;
+            ctx.shadowOffsetY = 16;
+          }
+          ctx.fillStyle = sideGrad;
+          let currentY = startY + d;
+          for (let i = 0; i < numLines; i++) {
+            ctx.strokeText(textLines[i], 512 + d, currentY);
+            ctx.fillText(textLines[i], 512 + d, currentY);
+            currentY += finalLineSpacing;
+          }
+          ctx.restore();
+        }
+
+        // 6. 强制且彻底清空 Canvas 级别的全部阴影渲染参数，防止对前景和底部小字造成边缘虚化污染
+        ctx.shadowColor = 'transparent';
+        ctx.shadowBlur = 0;
+        ctx.shadowOffsetX = 0;
+        ctx.shadowOffsetY = 0;
+
+        // 7. 绘制前景正面 (高亮发光面，配以深色高反差描边)
+        ctx.fillStyle = textGrad;
+        ctx.strokeStyle = '#020617'; // 正面大字的深色切面边缘
+        ctx.lineWidth = 5.5; // 稍宽的暗边界阻尼
+        ctx.lineJoin = 'round';
+
+        let currentY = startY;
+        for (let i = 0; i < numLines; i++) {
+          ctx.strokeText(textLines[i], 512, currentY);
+          ctx.fillText(textLines[i], 512, currentY);
+          currentY += finalLineSpacing;
+        }
+        ctx.restore();
+
+        // 8. 绘制 Tracker 装饰数据 (28px monospaced)
+        ctx.save();
+        ctx.font = '28px "Courier New", monospace';
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+
+        const decorYTop = 120;
+        const decorYBottom = 680;
+        const mockTracks = [
+          `00: C-4 01 C20 | 00: --- -- --- | 00: G-3 02 C10`,
+          `08: E-4 01 --- | 08: C-3 02 C20 | 08: --- -- ---`,
+          `16: G-4 01 C20 | 16: --- -- --- | 16: E-3 02 C10`,
+          `24: B-4 01 --- | 24: G-3 02 C20 | 24: --- -- ---`
+        ];
+
+        ctx.textAlign = 'center';
+        ctx.fillText(`[ NATIVE AUDIO ENGINE ACTIVE ]`, 512, 90);
+
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.12)';
+        ctx.fillText(mockTracks[0], 512, decorYTop);
+        ctx.fillText(mockTracks[1], 512, decorYTop + 32);
+        ctx.fillText(mockTracks[2], 512, decorYBottom);
+        ctx.fillText(mockTracks[3], 512, decorYBottom + 32);
+        ctx.restore();
+
+        // 9. 绘制分割线
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.moveTo(80, 780);
+        ctx.lineTo(944, 780);
+        ctx.stroke();
+
+        // 10. 绘制完整歌曲标题和艺术家
+        ctx.save();
+        ctx.textAlign = 'center';
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 52px system-ui, -apple-system, sans-serif';
+        let displayTitle = safeTitle;
+        if (ctx.measureText(displayTitle).width > 920) {
+          while (ctx.measureText(displayTitle + '...').width > 920 && displayTitle.length > 0) {
+            displayTitle = displayTitle.slice(0, -1);
+          }
+          displayTitle += '...';
+        }
+        ctx.fillText(displayTitle, 512, 855);
+
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
+        ctx.font = '36px system-ui, -apple-system, sans-serif';
+        let displayArtist = artist || 'Unknown Artist';
+        if (ctx.measureText(displayArtist).width > 920) {
+          while (ctx.measureText(displayArtist + '...').width > 920 && displayArtist.length > 0) {
+            displayArtist = displayArtist.slice(0, -1);
+          }
+          displayArtist += '...';
+        }
+        ctx.fillText(displayArtist, 512, 920);
+        ctx.restore();
+
+        return canvas.toDataURL('image/png');
+      };
+
       const updateMediaSessionMetadata = (title: string, artist: string) => {
+        const artworkUrl = generateAsciiArtworkImage(title, artist);
         navigator.mediaSession.metadata = new MediaMetadata({
           title: title || 'Unknown Title',
           artist: artist || 'Unknown Artist',
           album: 'ModFM Tracker Player',
           artwork: [
-            { src: '/cover.png', sizes: '1024x1024', type: 'image/png' }
+            { src: artworkUrl, sizes: '1024x1024', type: 'image/png' }
           ]
         });
       };
@@ -3699,12 +4004,10 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
       window.addEventListener('player:play-state', (e: any) => {
         const detail = e.detail || {};
         navigator.mediaSession.playbackState = detail.isPlaying ? 'playing' : 'paused';
-        if (mediaStreamAudio) {
-          if (detail.isPlaying) {
-            mediaStreamAudio.play().catch(() => {});
-          } else {
-            mediaStreamAudio.pause();
-          }
+        if (detail.isPlaying) {
+          startMediaBridge();
+        } else {
+          stopMediaBridge();
         }
       });
 
@@ -3783,7 +4086,7 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
       var usableBins = (freqLen * 0.78) | 0;
       if (usableBins < bars) usableBins = bars;
       var binsPerBar = usableBins / bars;
-      
+
       var allZero = true;
       for (var b = 0; b < bars; b++) {
         var bStart = (b * binsPerBar) | 0;
@@ -3799,7 +4102,7 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
         scopeBarSnapshot[b] = nextBar;
         var prevPeak = scopeBarPeaks[b] || 0;
         scopeBarPeaks[b] = nextBar > prevPeak ? nextBar : prevPeak * peakDecay;
-        
+
         if (nextBar > 0.05 || scopeBarPeaks[b] > 0.05) {
           allZero = false;
         }
@@ -3880,7 +4183,7 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
           showWebGLErrorBanner("主示波器 WebGL 运行时错误 (ScopeGL Render)", e);
           try {
             if (scopeGLRenderer) scopeGLRenderer.destroy();
-          } catch (ex) {}
+          } catch (ex) { }
           scopeGLRenderer = null;
           scopeGLFailed = true;
           // Remove GL canvas, restore 2D canvas
@@ -4410,7 +4713,7 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
             const colsCount = cells[0].length;
             const rowsCount = cells.length;
             const dpr = window.devicePixelRatio || 1;
-            
+
             const highlightAlpha = (() => {
               const style = window.getComputedStyle(document.documentElement);
               let val = style.getPropertyValue("--pattern-row-highlight-alpha").trim();
@@ -4980,6 +5283,7 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
   }
 
   function play(url, trackId?, fromHistoryNav = false) {
+    if (startMediaBridgeImpl) startMediaBridgeImpl(url);
     if (!fromHistoryNav) {
       isNavigatingHistory = false;
       historyCursor = 0;
@@ -4999,10 +5303,7 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
     if (playItem) playItem(url);
   }
 
-  window.play = (url, trackId?) => {
-    unlockMediaStreamAudio();
-    play(url, trackId);
-  };
+  window.play = play;
   window.resetSettings = resetSettings;
   window.clearHistory = clearHistory;
   window.clearCachedPlaylist = clearCachedPlaylist;
