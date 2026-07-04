@@ -78,8 +78,41 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
     return safeJsonParse(value, fallback);
   }
 
+  var mediaStreamDest: MediaStreamAudioDestinationNode | null = null;
+  var mediaStreamAudio: HTMLAudioElement | null = null;
+
+  if (typeof window !== "undefined") {
+    try {
+      mediaStreamAudio = document.createElement('audio');
+      mediaStreamAudio.style.display = 'none';
+      document.body.appendChild(mediaStreamAudio);
+    } catch (e) {
+      console.warn("Failed to pre-create mediaStreamAudio:", e);
+    }
+  }
+
+  function unlockMediaStreamAudio() {
+    if (mediaStreamAudio && mediaStreamAudio.paused) {
+      mediaStreamAudio.play().catch(() => {});
+    }
+  }
+
+  function ensureMediaStreamCapture(ctx: AudioContext) {
+    if (!mediaStreamDest && ctx && typeof ctx.createMediaStreamDestination === 'function') {
+      try {
+        mediaStreamDest = ctx.createMediaStreamDestination();
+        if (mediaStreamAudio) {
+          mediaStreamAudio.srcObject = mediaStreamDest.stream;
+        }
+      } catch (err) {
+        console.warn("Failed to bind AudioContext to MediaStream:", err);
+      }
+    }
+  }
+
   let togglePlayImpl: (() => void) | undefined;
   window.togglePlay = () => {
+    unlockMediaStreamAudio();
     if (togglePlayImpl) {
       togglePlayImpl();
     } else {
@@ -1642,8 +1675,7 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
         null,
         "Sorry<br>Your browser does not support WebAudio.<br>Supported browsers are Chrome, Firefox, Safari, and Edge",
       );
-    } else {
-      // var demoMod = "../demomods/StardustMemories.mod";
+
 
       var startTime;
       var wasPlaying;
@@ -1856,7 +1888,12 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
             };
             processNode.connect(normGainNode);
             normGainNode.connect(gainNode);
-            gainNode.connect(ctx.destination);
+            ensureMediaStreamCapture(ctx);
+            if (mediaStreamDest) {
+              gainNode.connect(mediaStreamDest);
+            } else {
+              gainNode.connect(ctx.destination);
+            }
             gainNode.connect(analyser); // scope reads post-user-volume
             processNode.connect(measurerNode); // RMS measurement pre-gain
             fireEvent('onInitialized');
@@ -2336,7 +2373,12 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
             // src → measurerNode                            (RMS pre-gain)
             src.connect(normGainNode);
             normGainNode.connect(gainNode);
-            gainNode.connect(ctx.destination);
+            ensureMediaStreamCapture(ctx);
+            if (mediaStreamDest) {
+              gainNode.connect(mediaStreamDest);
+            } else {
+              gainNode.connect(ctx.destination);
+            }
             gainNode.connect(analyser);
             src.connect(measurerNode);
           }
@@ -3197,7 +3239,12 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
       // and interpose btNormGainNode for loudness normalization.
       BassoonTracker.audio.cutOffVolume.disconnect();
       BassoonTracker.audio.cutOffVolume.connect(btNormGainNode);
-      btNormGainNode.connect(ctx.destination);
+      ensureMediaStreamCapture(ctx);
+      if (mediaStreamDest) {
+        btNormGainNode.connect(mediaStreamDest);
+      } else {
+        btNormGainNode.connect(ctx.destination);
+      }
       // Scope analyser reads post-AGC signal (shows normalized output)
       btNormGainNode.connect(analyser);
       // RMS measurer reads pre-AGC signal (raw source level)
@@ -3552,15 +3599,7 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
 
     // ── Media Session API 集成 ──
     if (typeof window !== 'undefined' && 'mediaSession' in navigator) {
-      // 使用无声 Wav Base64 维持音频会话（Audio Focus）防止 Web Audio 暂停后失去焦点
-      const silentAudioUrl = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAAA";
-      let silentAudio: HTMLAudioElement | null = null;
-      try {
-        silentAudio = new Audio(silentAudioUrl);
-        silentAudio.loop = true;
-      } catch (e) {
-        console.warn("Failed to create silent Audio object", e);
-      }
+
 
       const mediaSessionSeek = (timeInSeconds: number) => {
         if (!isTrackReady) return;
@@ -3592,15 +3631,15 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
 
       try {
         navigator.mediaSession.setActionHandler('play', () => {
-          if (silentAudio) {
-            silentAudio.play().catch(() => {});
+          if (mediaStreamAudio) {
+            mediaStreamAudio.play().catch(() => {});
           }
           if (window.togglePlay) window.togglePlay();
           navigator.mediaSession.playbackState = 'playing';
         });
         navigator.mediaSession.setActionHandler('pause', () => {
-          if (silentAudio) {
-            silentAudio.pause();
+          if (mediaStreamAudio) {
+            mediaStreamAudio.pause();
           }
           if (window.togglePlay) window.togglePlay();
           navigator.mediaSession.playbackState = 'paused';
@@ -3660,11 +3699,11 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
       window.addEventListener('player:play-state', (e: any) => {
         const detail = e.detail || {};
         navigator.mediaSession.playbackState = detail.isPlaying ? 'playing' : 'paused';
-        if (silentAudio) {
+        if (mediaStreamAudio) {
           if (detail.isPlaying) {
-            silentAudio.play().catch(() => {});
+            mediaStreamAudio.play().catch(() => {});
           } else {
-            silentAudio.pause();
+            mediaStreamAudio.pause();
           }
         }
       });
@@ -4960,7 +4999,10 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
     if (playItem) playItem(url);
   }
 
-  window.play = play;
+  window.play = (url, trackId?) => {
+    unlockMediaStreamAudio();
+    play(url, trackId);
+  };
   window.resetSettings = resetSettings;
   window.clearHistory = clearHistory;
   window.clearCachedPlaylist = clearCachedPlaylist;
