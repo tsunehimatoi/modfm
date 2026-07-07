@@ -111,9 +111,9 @@ The server uses SQLite (via the `better-sqlite3` driver):
 
 ### 3. Custom Modifications to libopenmpt (Vendored Modifications)
 To enable real-time, jitter-free oscilloscope rendering, we deeply integrated and customized the `libopenmpt` decoder. All modifications are in the `libopenmpt/` folder:
-- **Waveform Processor**: Added [waveform_processor.c](file:///www/wwwroot/trackerplayer/modfm/libopenmpt/soundlib/waveform_processor.c) and [waveform_processor.h](file:///www/wwwroot/trackerplayer/modfm/libopenmpt/soundlib/waveform_processor.h) to implement the C version of the `PeakSpeedTrigger` alignment algorithm, 1-pole high-pass filter, and adaptive period tracking.
-- **Mixer Interception**: Modified [Fastmix.cpp](file:///www/wwwroot/trackerplayer/modfm/libopenmpt/soundlib/Fastmix.cpp) to intercept raw PCM float outputs from each active channel and feed them into the waveform processor.
-- **Interface Exposure**: Modified [Sndfile.cpp](file:///www/wwwroot/trackerplayer/modfm/libopenmpt/soundlib/Sndfile.cpp) to reset the processors when loading a track and export WASM bindings for the frontend AudioWorklet to read the stabilized waveform buffers.
+- **Waveform Processor**: Added [waveform_processor.c](libopenmpt/soundlib/waveform_processor.c) and [waveform_processor.h](libopenmpt/soundlib/waveform_processor.h) to implement the C version of the `PeakSpeedTrigger` alignment algorithm, 1-pole high-pass filter, and adaptive period tracking.
+- **Mixer Interception**: Modified [Fastmix.cpp](libopenmpt/soundlib/Fastmix.cpp) to intercept raw PCM float outputs from each active channel and feed them into the waveform processor.
+- **Interface Exposure**: Modified [Sndfile.cpp](libopenmpt/soundlib/Sndfile.cpp) to reset the processors when loading a track and export WASM bindings for the frontend AudioWorklet to read the stabilized waveform buffers.
 
 > [!TIP]
 > If you make changes to the C/C++ files under `libopenmpt/` and need to compile it, please refer to the [WASM Build Guide](./BUILD_libopenmpt.md).
@@ -244,9 +244,9 @@ npm run preview
 
 ### 3. 第三方编译及源码修改说明 (Vendored Modifications)
 为了实现示波器波形实时的平滑锁相，本项目对内置的 `libopenmpt` 解码器进行了深度集成与定制修改，相关改动已全部包含在 `libopenmpt/` 源码中：
-- **新增波形计算模块**：在 `libopenmpt/soundlib/` 目录下新增了 [waveform_processor.c](file:///www/wwwroot/trackerplayer/modfm/libopenmpt/soundlib/waveform_processor.c) 和 [waveform_processor.h](file:///www/wwwroot/trackerplayer/modfm/libopenmpt/soundlib/waveform_processor.h)，用 C 语言全新移植实现了原版 C# `SidWiz` 的 `PeakSpeedTrigger` (峰速触发) 对齐算法、一阶高通滤波、自适应波形周期分析以及数据归一化逻辑。
-- **音频混音拦截**：修改了 [Fastmix.cpp](file:///www/wwwroot/trackerplayer/modfm/libopenmpt/soundlib/Fastmix.cpp)，在声道混音的底层循环中拦截每一个通道产生的原始 PCM 浮点音频信号，将其喂入对应的通道环形环形缓冲区。
-- **接口初始化与暴露**：修改了 [Sndfile.cpp](file:///www/wwwroot/trackerplayer/modfm/libopenmpt/soundlib/Sndfile.cpp)，在歌曲加载重置时完成波形处理器的初始化，并向 WebAssembly 胶水层暴露出提取并计算每个通道当前对齐样本的接口函数。
+- **新增波形计算模块**：在 `libopenmpt/soundlib/` 目录下新增了 [waveform_processor.c](libopenmpt/soundlib/waveform_processor.c) 和 [waveform_processor.h](libopenmpt/soundlib/waveform_processor.h)，用 C 语言全新移植实现了原版 C# `SidWiz` 的 `PeakSpeedTrigger` (峰速触发) 对齐算法、一阶高通滤波、自适应波形周期分析以及数据归一化逻辑。
+- **音频混音拦截**：修改了 [Fastmix.cpp](libopenmpt/soundlib/Fastmix.cpp)，在声道混音的底层循环中拦截每一个通道产生的原始 PCM 浮点音频信号，将其喂入对应的通道环形环形缓冲区。
+- **接口初始化与暴露**：修改了 [Sndfile.cpp](libopenmpt/soundlib/Sndfile.cpp)，在歌曲加载重置时完成波形处理器的初始化，并向 WebAssembly 胶水层暴露出提取并计算每个通道当前对齐样本的接口函数。
 
 > [!TIP]
 > 如果您修改了 `libopenmpt/` 目录下的 C/C++ 源码并需要重新编译 WebAssembly 库，请详细阅读 [WASM 构建指南](./BUILD_libopenmpt.md) 进行环境配置、库链接及合并打包。
