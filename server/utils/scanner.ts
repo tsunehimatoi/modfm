@@ -3,8 +3,8 @@ import { join } from 'node:path';
 import db from '../db';
 import { parseMetadata } from './metadata-parser';
 
-// 音乐文件夹的基础路径（优先从环境变量读取，默认指向本地 data/music 目录）
-const MUSIC_BASE_PATH = process.env.MUSIC_PATH || join(process.cwd(), 'data/music');
+// 音乐文件夹的基础路径
+const MUSIC_BASE_PATH = '/nvme1/collectedmod';
 
 // 支持的前端可播放扩展名
 // 所有可播放格式：

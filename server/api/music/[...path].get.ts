@@ -1,6 +1,7 @@
 import { readFileSync, statSync } from 'node:fs';
-import { join, resolve, normalize } from 'node:path';
+import { basename, join, resolve, normalize } from 'node:path';
 import { createError } from 'h3';
+import { fetchAndStoreTmaDataForSong } from '../../utils/tma';
 
 // 音乐文件的基础路径
 const MUSIC_BASE_PATH = '/nvme1/collectedmod';
@@ -21,6 +22,12 @@ export default defineEventHandler(async (event) => {
     // 规范化路径以防止路径遍历攻击
     const decodedPath = decodeURIComponent(pathParam);
     const requestedPath = normalize(decodedPath);
+
+    // 当用户请求播放该歌曲时，异步获取并存储该单曲的 TMA 详细数据
+    const filename = basename(requestedPath);
+    fetchAndStoreTmaDataForSong(filename).catch(err => {
+      console.error(`[TMA] Background job error for ${filename} on music request:`, err);
+    });
     const fullPath = resolve(join(MUSIC_BASE_PATH, requestedPath));
 
     // 安全检查：确保请求的路径在基础路径内

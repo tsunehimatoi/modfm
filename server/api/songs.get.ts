@@ -44,14 +44,6 @@ export default defineEventHandler(async (event) => {
       if (!filenamesStr) {
         return { songs: [], total: 0, page, limit, totalPages: 0 };
       }
-      const historyFilenames = filenamesStr.split(',').map(f => f.trim()).filter(Boolean);
-      if (historyFilenames.length === 0) {
-        return { songs: [], total: 0, page, limit, totalPages: 0 };
-      }
-      
-      const placeholders = historyFilenames.map(() => '?').join(',');
-      conditions.push(`songs.filename IN (${placeholders})`);
-      params.push(...historyFilenames);
     }
   }
 
@@ -97,6 +89,16 @@ export default defineEventHandler(async (event) => {
   if (trackerName && trackerName !== 'all') {
     conditions.push('songs.tracker_name LIKE ?');
     params.push(`%${trackerName}%`);
+  }
+
+  // 4.4. 显式文件名列表筛选
+  if (filenamesStr) {
+    const list = filenamesStr.split(',').map(f => f.trim()).filter(Boolean);
+    if (list.length > 0) {
+      const placeholders = list.map(() => '?').join(',');
+      conditions.push(`songs.filename IN (${placeholders})`);
+      params.push(...list);
+    }
   }
 
   // 组装 WHERE 语句
@@ -155,10 +157,64 @@ export default defineEventHandler(async (event) => {
 
   // 执行分页数据查询
   const offset = (page - 1) * limit;
-  const dataSql = `SELECT songs.id, songs.filename as fn, songs.title, songs.artist, songs.extension, songs.file_size, songs.file_mtime, songs.playable, songs.tracker_format, songs.channels, songs.tracker_name, songs.message, songs.instruments, songs.metadata 
-                   FROM songs ${joinClause} ${whereClause} ${orderBy} LIMIT ? OFFSET ?`;
+
+  const dataSql = `SELECT songs.id, songs.filename as fn, songs.title, songs.artist, songs.extension, songs.file_size, songs.file_mtime, songs.playable, songs.tracker_format, songs.channels, songs.tracker_name, songs.message, songs.instruments, songs.metadata,
+                    t.tma_id, t.hash as tma_hash, t.title as tma_title, t.filename as tma_filename, t.format as tma_format, t.size as tma_size, t.bytes as tma_bytes, t.date as tma_date, t.timestamp as tma_timestamp, t.tracker_format as tma_tracker_format, t.channels as tma_channels, t.instruments as tma_instruments, t.genre_id as tma_genre_id, t.genre_text as tma_genre_text, t.ratings as tma_ratings, t.license as tma_license, t.artist_info as tma_artist_info, t.fetched_at as tma_fetched_at
+             FROM songs 
+             ${joinClause} 
+             LEFT JOIN tma_data t ON songs.id = t.song_id
+             ${whereClause} 
+             ${orderBy} 
+             LIMIT ? OFFSET ?`;
   
   const songs = db.prepare(dataSql).all(...params, limit, offset) as any[];
+
+  for (const song of songs) {
+    if (song.tma_fetched_at !== undefined && song.tma_fetched_at !== null) {
+      song.tma_metadata = {
+        tma_id: song.tma_id,
+        hash: song.tma_hash,
+        title: song.tma_title,
+        filename: song.tma_filename,
+        format: song.tma_format,
+        size: song.tma_size,
+        bytes: song.tma_bytes,
+        date: song.tma_date,
+        timestamp: song.tma_timestamp,
+        tracker_format: song.tma_tracker_format,
+        channels: song.tma_channels,
+        instruments: song.tma_instruments,
+        genre_id: song.tma_genre_id,
+        genre_text: song.tma_genre_text,
+        ratings: song.tma_ratings ? JSON.parse(song.tma_ratings) : null,
+        license: song.tma_license ? JSON.parse(song.tma_license) : null,
+        artist_info: song.tma_artist_info ? JSON.parse(song.tma_artist_info) : null,
+        fetched_at: song.tma_fetched_at
+      };
+    } else {
+      song.tma_metadata = null;
+    }
+    
+    // 清除临时扁平字段
+    delete song.tma_id;
+    delete song.tma_hash;
+    delete song.tma_title;
+    delete song.tma_filename;
+    delete song.tma_format;
+    delete song.tma_size;
+    delete song.tma_bytes;
+    delete song.tma_date;
+    delete song.tma_timestamp;
+    delete song.tma_tracker_format;
+    delete song.tma_channels;
+    delete song.tma_instruments;
+    delete song.tma_genre_id;
+    delete song.tma_genre_text;
+    delete song.tma_ratings;
+    delete song.tma_license;
+    delete song.tma_artist_info;
+    delete song.tma_fetched_at;
+  }
 
   // 如果是历史模式且未登录，根据前端传入的文件名顺序重新对结果进行排序，以便保持历史播放的时间先后顺序
   if (mode === 2 && !user && filenamesStr) {
