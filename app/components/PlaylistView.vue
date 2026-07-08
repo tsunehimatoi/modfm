@@ -63,6 +63,36 @@ const syncFromWindowState = () => {
 };
 
 onMounted(() => {
+  if (typeof window !== "undefined") {
+    try {
+      const stored = window.localStorage.getItem("player_filters");
+      if (stored) {
+        const savedFilters = JSON.parse(stored);
+        if (savedFilters.mode !== undefined) {
+          source.value = String(savedFilters.mode);
+          playlistMode.value = Number(savedFilters.mode);
+        }
+        if (savedFilters.sort !== undefined) {
+          sort.value = String(savedFilters.sort);
+        }
+        if (savedFilters.channels !== undefined) {
+          channels.value = savedFilters.channels;
+        }
+        if (savedFilters.size !== undefined) {
+          size.value = savedFilters.size;
+        }
+        if (savedFilters.trackerName !== undefined) {
+          trackerName.value = savedFilters.trackerName;
+        }
+        if (savedFilters.search !== undefined) {
+          searchText.value = savedFilters.search;
+        }
+      }
+    } catch (e) {
+      console.error("Failed to restore filters in PlaylistView.vue:", e);
+    }
+  }
+
   if (typeof window === "undefined") return;
   syncFromWindowState();
   window.addEventListener("player:playlist-loading", handlePlaylistLoading);
@@ -120,6 +150,13 @@ const isFilterMenuOpen = ref(false);
 const trackerName = ref("");
 const formatFilterRef = ref(null);
 const searchText = ref("");
+const isFormatFiltered = ref(false);
+
+const onFormatFilterChange = (data) => {
+  if (data && data.hasActiveFilter !== undefined) {
+    isFormatFiltered.value = data.hasActiveFilter;
+  }
+};
 
 const sortOptions = computed(() => [
   { label: t("playlist.sortIdAsc", null, "ID 正序 (升序)"), value: "0" },
@@ -138,7 +175,9 @@ const hasActiveFilters = computed(() => {
   return sort.value !== "0" ||
          channels.value !== "all" ||
          size.value !== "all" ||
-         (trackerName.value && trackerName.value.trim() !== "");
+         (trackerName.value && trackerName.value.trim() !== "") ||
+         (searchText.value && searchText.value.trim() !== "") ||
+         isFormatFiltered.value;
 });
 
 const onTrackerNameChange = () => {
@@ -166,9 +205,21 @@ const clearAllFilters = () => {
   channels.value = "all";
   size.value = "all";
   trackerName.value = "";
+  searchText.value = "";
+  isFormatFiltered.value = false;
   if (formatFilterRef.value) {
     formatFilterRef.value.resetToDefault();
   }
+
+  if (typeof window !== "undefined" && window.localStorage) {
+    try {
+      window.localStorage.removeItem("player_filters");
+      window.localStorage.removeItem("player_filter_extensions");
+    } catch (e) {
+      console.error("Failed to clear filters in localStorage:", e);
+    }
+  }
+
   nextTick(() => {
     // Dispatch a single change event to trigger one server reload.
     // All filter values are read from the DOM by loadSongsFromServer,
@@ -314,12 +365,12 @@ const playlistModeLabel = computed(() => {
             <BaseSelect id="sortSelect" v-model="sort" :options="sortOptions" class="w-full" />
           </div>
 
-          <!-- Format (multi-select panel) -->
+          <!-- Format Filter Button -->
           <div class="flex flex-col gap-1.5">
             <label class="text-[0.68rem] font-bold uppercase tracking-[0.15em] text-text-muted/80">
-              {{ t("playlist.formatLabel", null, "格式") }}
+              {{ t("playlist.formatLabel", null, "音频格式") }}
             </label>
-            <FormatFilterPanel ref="formatFilterRef" />
+            <FormatFilterPanel ref="formatFilterRef" @change="onFormatFilterChange" />
           </div>
 
           <!-- Channels -->
@@ -339,7 +390,7 @@ const playlistModeLabel = computed(() => {
           </div>
 
           <!-- Tracker Name Filter -->
-          <div class="flex flex-col gap-1.5 sm:col-span-2">
+          <div class="flex flex-col gap-1.5 md:col-span-2 lg:col-span-3">
             <label class="text-[0.68rem] font-bold uppercase tracking-[0.15em] text-text-muted/80 flex items-center justify-between">
               <span>{{ t("playlist.trackerNameLabel", null, "Tracker 名称") }}</span>
               <button 
@@ -384,17 +435,17 @@ const playlistModeLabel = computed(() => {
             </div>
           </div>
 
-          <!-- Clear all filters -->
-          <div
-            v-if="hasActiveFilters"
-            class="col-span-full flex justify-end border-t border-border/30 pt-3 mt-1"
-          >
+          <!-- Clear Filters Button -->
+          <div v-if="hasActiveFilters" class="flex flex-col gap-1.5 justify-end">
+            <label class="text-[0.68rem] font-bold uppercase tracking-[0.15em] opacity-0 select-none">
+              Clear
+            </label>
             <button
               type="button"
               @click="clearAllFilters"
-              class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-text-soft hover:text-accent hover:bg-accent/[0.08] transition-all cursor-pointer select-none active:scale-[0.97]"
+              class="flex items-center justify-center gap-1.5 h-10 px-4 rounded-lg border border-red-500/20 bg-red-500/[0.04] text-red-500 hover:bg-red-500/[0.08] hover:border-red-500/40 text-sm font-semibold transition-all cursor-pointer select-none active:scale-[0.98] w-full"
             >
-              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
                 <path d="M3 3v5h5" />
               </svg>

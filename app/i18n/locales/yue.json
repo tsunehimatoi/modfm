@@ -43,7 +43,7 @@
     "sortSizeAsc": "尺寸由小到大（細到大）",
     "sortFilenameDesc": "檔案名稱遞減（Z-A）",
     "channels4": "4 個頻道",
-    "clearAllFilters": "清除篩選條件",
+    "clearAllFilters": "清除篩選",
     "sortMtime": "修改時間（新到舊）",
     "sortTitleAsc": "標題升序（A-Z）",
     "formatFilterSelected": "{n} 種格式",

@@ -54,6 +54,8 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
   playerAppInitialized = true;
   window.__playerAppInitialized = true;
 
+  let isInitializing = true;
+
   function safeJsonParse(value, fallback) {
     if (value === null || value === undefined || value === '') {
       return fallback;
@@ -678,6 +680,58 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
       totalItems: null,
     };
 
+    // 从 localStorage 加载筛选条件并进行回填
+    const savedFilters = safeJsonParse(localStorage.getItem("player_filters"), null) || {};
+
+    if (savedFilters.search !== undefined && searchInput) {
+      (searchInput as HTMLInputElement).value = savedFilters.search;
+    }
+    if (savedFilters.sort !== undefined && sortSelect) {
+      (sortSelect as HTMLSelectElement).value = String(savedFilters.sort);
+      sortType = parseInt((sortSelect as HTMLSelectElement).value, 10) || 0;
+    }
+    if (savedFilters.channels !== undefined && channelsSelect) {
+      (channelsSelect as HTMLSelectElement).value = savedFilters.channels;
+    }
+    if (savedFilters.size !== undefined && sizeSelect) {
+      (sizeSelect as HTMLSelectElement).value = savedFilters.size;
+    }
+
+    const trackerNameInput = document.querySelector("#trackerNameInput") as HTMLInputElement | null;
+    if (savedFilters.trackerName !== undefined && trackerNameInput) {
+      trackerNameInput.value = savedFilters.trackerName;
+    }
+
+    if (savedFilters.mode !== undefined) {
+      fmusicListActive = parseInt(savedFilters.mode, 10) || 0;
+    }
+
+    if (savedFilters.page !== undefined) {
+      currentPage = parseInt(savedFilters.page, 10) || 1;
+      if (pageInput) {
+        (pageInput as HTMLInputElement).value = String(currentPage);
+      }
+    }
+
+    function saveFilterSettings() {
+      if (typeof window === "undefined") return;
+      const trackerNameEl = document.querySelector("#trackerNameInput") as HTMLInputElement | null;
+      const filterData = {
+        search: searchInput ? (searchInput as HTMLInputElement).value.trim() : "",
+        sort: sortSelect ? (sortSelect as HTMLSelectElement).value : "0",
+        channels: channelsSelect ? (channelsSelect as HTMLSelectElement).value : "all",
+        size: sizeSelect ? (sizeSelect as HTMLSelectElement).value : "all",
+        trackerName: trackerNameEl ? trackerNameEl.value.trim() : "",
+        mode: fmusicListActive,
+        page: currentPage
+      };
+      try {
+        localStorage.setItem("player_filters", JSON.stringify(filterData));
+      } catch (e) {
+        console.error("Failed to save player_filters:", e);
+      }
+    }
+
     function formatCount(value) {
       const num = Number(value);
       if (!Number.isFinite(num)) return "0";
@@ -1290,11 +1344,25 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
 
         if (res.songs && Array.isArray(res.songs) && typeof window !== "undefined") {
           const cache = (window as any).__tmaCache || {};
+          let cacheChanged = false;
           res.songs.forEach((song: any) => {
             if (song.tma_metadata && song.fn) {
               cache[song.fn] = song.tma_metadata;
+              cacheChanged = true;
             }
           });
+          if (cacheChanged) {
+            try {
+              const keys = Object.keys(cache);
+              if (keys.length > 1000) {
+                const keysToDelete = keys.slice(0, keys.length - 1000);
+                keysToDelete.forEach(k => delete cache[k]);
+              }
+              localStorage.setItem("tma_metadata_cache", JSON.stringify(cache));
+            } catch (e) {
+              console.error("Failed to save tma_metadata_cache in loadSongsFromServer:", e);
+            }
+          }
         }
 
         serverTotalItems = res.total;
@@ -1476,6 +1544,7 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
       const totalPages = getTotalPages();
       const safeTotalPages = Math.max(1, totalPages);
       currentPage = clampPage(requestedPage, safeTotalPages);
+      if (!isInitializing) saveFilterSettings();
       scheduleRenderPlaylist(currentPage);
     }
 
@@ -1496,6 +1565,7 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
       }
 
       currentPage = clampPage(targetPage, safeTotalPages);
+      if (!isInitializing) saveFilterSettings();
       scheduleRenderPlaylist(currentPage);
     }
 
@@ -1506,13 +1576,27 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
     });
 
     // First Load
-    function firstLoadRender() {
+    async function firstLoadRender() {
       setListModeLoading(false);
       if (loading001) {
         loading001.style.display = "none";
       }
-      currentPage = 1;
-      loadSongsFromServer(currentPage).then(() => {
+
+      // 等待身份状态就绪
+      await refreshAuth();
+
+      // 如果未登录，且列表模式被恢复为 1（收藏），则强制纠正为 0（全部）
+      if (!username && fmusicListActive === 1) {
+        fmusicListActive = 0;
+        const likeBoxBtn = document.getElementById("likeBoxBtn") as HTMLSelectElement | null;
+        if (likeBoxBtn) {
+          likeBoxBtn.value = "0";
+        }
+        saveFilterSettings();
+      }
+
+      const onInitDone = () => {
+        isInitializing = false;
         const initialTrack = getTrackFromLocation();
         const initialId = initialTrack ? Number(initialTrack.id) : NaN;
         if (Number.isFinite(initialId) && initialId > 0) {
@@ -1532,7 +1616,23 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
             console.error("Failed to load initial song name", err);
           });
         }
-      });
+      };
+
+      try {
+        if (fmusicListActive === 1) {
+          await fetchUserMusicList();
+          onInitDone();
+        } else if (fmusicListActive === 2) {
+          renderHistoryPlaylist();
+          onInitDone();
+        } else {
+          await loadSongsFromServer(currentPage);
+          onInitDone();
+        }
+      } catch (err) {
+        console.error("Failed to load initial playlist:", err);
+        onInitDone();
+      }
     }
 
     firstLoadRender();
@@ -3106,24 +3206,30 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
       document.addEventListener("change", (e) => {
         const target = e.target;
         if (target && target.id === "extensionsInput") {
+          if (isInitializing) return;
           currentPage = 1;
           if (pageInput) pageInput.value = currentPage;
+          saveFilterSettings();
           loadSongsFromServer(currentPage);
         }
       });
 
       if (channelsSelect) {
         channelsSelect.addEventListener("change", () => {
+          if (isInitializing) return;
           currentPage = 1;
           if (pageInput) pageInput.value = currentPage;
+          saveFilterSettings();
           loadSongsFromServer(currentPage);
         });
       }
 
       if (sizeSelect) {
         sizeSelect.addEventListener("change", () => {
+          if (isInitializing) return;
           currentPage = 1;
           if (pageInput) pageInput.value = currentPage;
+          saveFilterSettings();
           loadSongsFromServer(currentPage);
         });
       }
@@ -3131,8 +3237,10 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
       const trackerNameInput = document.querySelector("#trackerNameInput");
       if (trackerNameInput) {
         trackerNameInput.addEventListener("change", () => {
+          if (isInitializing) return;
           currentPage = 1;
           if (pageInput) pageInput.value = currentPage;
+          saveFilterSettings();
           loadSongsFromServer(currentPage);
         });
       }
@@ -3166,6 +3274,7 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
         searchTimeout = setTimeout(() => {
           currentPage = 1;
           pageInput.value = currentPage;
+          if (!isInitializing) saveFilterSettings();
           renderFilteredPlaylist();
           searchTimeout = null;
         }, 200); // 200ms 防抖延迟
@@ -3218,6 +3327,7 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
                   break;
               }
             }
+            if (!isInitializing) saveFilterSettings();
           } catch (error) {
             console.error("Error in handleListModeChange:", error);
             setListModeLoading(false);
@@ -5556,6 +5666,11 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
   function clearCachedPlaylist() {
     localStorage.removeItem("cachedPlaylist");
     localStorage.removeItem("cachedPlaylistVersion");
+    localStorage.removeItem("tma_metadata_cache");
+    if (typeof window !== "undefined" && (window as any).__tmaCache) {
+      const keys = Object.keys((window as any).__tmaCache);
+      keys.forEach(k => delete (window as any).__tmaCache[k]);
+    }
     showToast(t("cache.cleared", null, "Cached playlist cleared!"), {
       variant: "success",
       title: t("toast.cache", null, "Cache"),

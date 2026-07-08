@@ -133,7 +133,33 @@ const showTrackInfo = ref(false);
 const trackMeta = ref({});
 const currentTmaData = ref(null);
 const currentTmaFetched = ref(false);
-const tmaCache = useState("tmaCache", () => ({}));
+const getStoredTmaCache = () => {
+  if (!import.meta.client) return {};
+  try {
+    const stored = localStorage.getItem("tma_metadata_cache");
+    return stored ? JSON.parse(stored) : {};
+  } catch (e) {
+    console.error("Failed to load tma_metadata_cache:", e);
+    return {};
+  }
+};
+
+const tmaCache = useState("tmaCache", () => getStoredTmaCache());
+
+const saveTmaCache = () => {
+  if (!import.meta.client) return;
+  try {
+    const keys = Object.keys(tmaCache.value);
+    if (keys.length > 1000) {
+      const keysToDelete = keys.slice(0, keys.length - 1000);
+      keysToDelete.forEach(k => delete tmaCache.value[k]);
+    }
+    localStorage.setItem("tma_metadata_cache", JSON.stringify(tmaCache.value));
+  } catch (e) {
+    console.error("Failed to save tma_metadata_cache:", e);
+  }
+};
+
 let pollInterval = null;
 let pollCount = 0;
 
@@ -154,6 +180,7 @@ async function fetchTmaStatus(filename) {
       const meta = res.songs[0].tma_metadata;
       // 写入缓存，不论是否有数据（就算是 null 占位符也缓存，表示已获取且无数据，避免重复请求）
       tmaCache.value[filename] = meta || null;
+      saveTmaCache();
       if (meta) {
         currentTmaData.value = meta.tma_id ? meta : null;
         currentTmaFetched.value = true;

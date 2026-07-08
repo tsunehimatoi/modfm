@@ -2,6 +2,7 @@
 import { ref, computed, onMounted } from "vue";
 
 const { t } = useI18n();
+const emit = defineEmits(["change"]);
 
 // ─── 预设定义 ───
 const CHIPTUNE3_ALL_EXTS = [
@@ -85,6 +86,21 @@ async function fetchCounts() {
   }
 }
 onMounted(async () => {
+  if (import.meta.client) {
+    try {
+      const stored = localStorage.getItem("player_filter_extensions");
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed && parsed.selected) {
+          selected.value = new Set(parsed.selected);
+          activePreset.value = parsed.preset !== undefined ? parsed.preset : "chiptune3";
+        }
+      }
+    } catch (e) {
+      console.error("Failed to restore filter extensions:", e);
+    }
+  }
+
   await fetchCounts();
   // 确保初始化时 68 种 C3 格式已写入隐藏 input，player-app.ts 读取前生效
   await nextTick();
@@ -137,6 +153,23 @@ function emitChange() {
     input.value = [...selected.value].join(",");
     input.dispatchEvent(new Event("change", { bubbles: true }));
   }
+  emit("change", {
+    selected: selected.value,
+    hasActiveFilter: hasActiveFilter.value
+  });
+  if (import.meta.client) {
+    try {
+      localStorage.setItem(
+        "player_filter_extensions",
+        JSON.stringify({
+          selected: [...selected.value],
+          preset: activePreset.value
+        })
+      );
+    } catch (e) {
+      console.error("Failed to save player_filter_extensions:", e);
+    }
+  }
 }
 
 // ─── 面板定位 ───
@@ -183,7 +216,18 @@ defineExpose({
   resetToDefault() {
     activePreset.value = 'chiptune3';
     selected.value = new Set(CHIPTUNE3_ALL_EXTS);
-    // Don't call emitChange() here — parent will batch and dispatch once
+    emit("change", { selected: selected.value, hasActiveFilter: false });
+    const input = document.getElementById("extensionsInput");
+    if (input) {
+      input.value = CHIPTUNE3_ALL_EXTS.join(",");
+    }
+    if (import.meta.client) {
+      try {
+        localStorage.removeItem("player_filter_extensions");
+      } catch (e) {
+        console.error("Failed to remove player_filter_extensions on reset:", e);
+      }
+    }
   },
 });
 
