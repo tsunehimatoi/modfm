@@ -3568,6 +3568,9 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
         if (isNativeMode) syncNativeVolume();
         // MIDI 模式下同时更新 midiVolumeGain 音量
         if (isMidiMode) syncMidiVolume();
+        // 持久化音量到 localStorage
+        storedSettings.setVolume = Number(volumeBar.value);
+        localStorage.setItem("player_settings", JSON.stringify(storedSettings));
         emitPlayerUiEvent("volume-change", {
           volume: Number(volumeBar.value),
         });
