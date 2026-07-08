@@ -27,6 +27,10 @@ try {
   db.exec('ALTER TABLE songs ADD COLUMN instruments TEXT');
 } catch (e) {}
 
+try {
+  db.exec('ALTER TABLE songs ADD COLUMN md5 TEXT');
+} catch (e) {}
+
 db.pragma('journal_mode = WAL');
 
 db.exec(`
@@ -95,6 +99,43 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_play_history_user_id ON play_history(user_id);
   CREATE INDEX IF NOT EXISTS idx_play_history_played_at ON play_history(played_at);
+
+  CREATE TABLE IF NOT EXISTS tma_data (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    song_id INTEGER UNIQUE,
+    hash TEXT,
+    tma_id INTEGER,
+    title TEXT,
+    filename TEXT,
+    format TEXT,
+    size TEXT,
+    bytes INTEGER,
+    date TEXT,
+    timestamp INTEGER,
+    tracker_format TEXT,
+    channels INTEGER,
+    instruments TEXT,
+    genre_id INTEGER,
+    genre_text TEXT,
+    ratings TEXT,
+    license TEXT,
+    artist_info TEXT,
+    raw_data TEXT,
+    fetched_at INTEGER NOT NULL,
+    FOREIGN KEY(song_id) REFERENCES songs(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_tma_data_song_id ON tma_data(song_id);
+  CREATE INDEX IF NOT EXISTS idx_tma_data_hash ON tma_data(hash);
+
+  CREATE TABLE IF NOT EXISTS tma_request_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    requested_at INTEGER NOT NULL,
+    hash TEXT NOT NULL,
+    success INTEGER NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_tma_request_log_requested_at ON tma_request_log(requested_at);
 `);
 
 // 迁移旧的 music_list JSON 字段到 favorites 表，并删除废弃的 music_list 字段
