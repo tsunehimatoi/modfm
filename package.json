@@ -7,13 +7,14 @@
     "dev": "nuxt dev --port 3401",
     "generate": "nuxt generate",
     "preview": "nuxt preview --port 3400",
-    "start": "PORT=3400 node .output/server/index.mjs",
+    "start": "PORT=3400 node --env-file=.env .output/server/index.mjs",
     "postinstall": "nuxt prepare"
   },
   "dependencies": {
     "@nuxtjs/color-mode": "^4.0.0",
     "bcryptjs": "^3.0.3",
     "better-sqlite3": "^12.6.2",
+    "fast-xml-parser": "^5.9.3",
     "nuxt": "^4.3.0",
     "vue": "^3.5.27",
     "vue-router": "^4.6.4"

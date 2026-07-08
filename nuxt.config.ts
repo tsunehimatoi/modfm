@@ -3,6 +3,10 @@ export default defineNuxtConfig({
   compatibilityDate: '2025-07-15',
   devtools: { enabled: true },
   devServer: { port: 3401 },
+  runtimeConfig: {
+    tmaApiKey: process.env.TMA_API_KEY || '',
+    tmaEnableFetch: process.env.TMA_ENABLE_FETCH === 'true'
+  },
   modules: ['@nuxtjs/tailwindcss', '@nuxtjs/color-mode'],
   colorMode: {
     preference: 'system', // default value of $colorMode.preference
