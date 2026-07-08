@@ -18,7 +18,6 @@ const fileName = ref(activeSong.value?.fileName || "");
 const fileUrl = ref(activeSong.value ? `/api/music/${encodeURIComponent(activeSong.value.fileName)}` : "");
 const downloadUrl = ref("");
 const gameUrl = ref("");
-const modArchiveUrl = ref("");
 const isPlaying = ref(false);
 const isTrackLoading = ref(false);
 const playmode = ref(1);
@@ -132,7 +131,118 @@ const modeIconPath = computed(() => {
 const showDownloadModal = ref(false);
 const showTrackInfo = ref(false);
 const trackMeta = ref({});
-const actionArchiveHref = computed(() => modArchiveUrl.value);
+const currentTmaData = ref(null);
+const currentTmaFetched = ref(false);
+const tmaCache = useState("tmaCache", () => ({}));
+let pollInterval = null;
+let pollCount = 0;
+
+function clearPoll() {
+  if (pollInterval) {
+    clearInterval(pollInterval);
+    pollInterval = null;
+  }
+  pollCount = 0;
+}
+
+async function fetchTmaStatus(filename) {
+  try {
+    const res = await $fetch("/api/songs", {
+      query: { limit: 1, filenames: filename }
+    });
+    if (res?.songs?.length > 0) {
+      const meta = res.songs[0].tma_metadata;
+      // 写入缓存，不论是否有数据（就算是 null 占位符也缓存，表示已获取且无数据，避免重复请求）
+      tmaCache.value[filename] = meta || null;
+      if (meta) {
+        currentTmaData.value = meta.tma_id ? meta : null;
+        currentTmaFetched.value = true;
+        clearPoll();
+      }
+    }
+  } catch (err) {
+    console.error("Failed to load current TMA metadata:", err);
+  }
+}
+
+watch(
+  () => fileName.value,
+  async (newFile) => {
+    if (!import.meta.client) return;
+    clearPoll();
+    currentTmaData.value = null;
+    currentTmaFetched.value = false;
+    if (!newFile) return;
+    
+    // 优先读取本地缓存中是否有已经抓取过的 TMA 数据（哪怕 tma_id 为 null 的占位符也算抓取过）
+    if (tmaCache.value[newFile] !== undefined) {
+      const meta = tmaCache.value[newFile];
+      currentTmaData.value = meta && meta.fetched_at ? (meta.tma_id ? meta : null) : null;
+      currentTmaFetched.value = true;
+      return;
+    }
+    
+    // 立即拉取一次
+    await fetchTmaStatus(newFile);
+    
+    // 如果立即请求未能确认获取完毕（即从未抓取），则启动定时轮询等待后台异步存库
+    if (!currentTmaFetched.value) {
+      pollInterval = setInterval(async () => {
+        pollCount++;
+        if (pollCount > 8) { // 最多尝试 8 次（约 12 秒）
+          clearPoll();
+          currentTmaFetched.value = true; // 超时放弃，标记为已尝试
+          return;
+        }
+        await fetchTmaStatus(newFile);
+      }, 1500);
+    }
+  },
+  { immediate: true }
+);
+
+watch(
+  () => currentTmaData.value,
+  (tma) => {
+    if (!tma) return;
+    let artistName = "";
+    if (tma.artist_info) {
+      const info = tma.artist_info;
+      const artists = [];
+      if (info.artist) {
+        if (Array.isArray(info.artist)) {
+          info.artist.forEach(a => {
+            if (a.alias && a.alias !== 'n/a') artists.push(a.alias);
+          });
+        } else if (info.artist.alias && info.artist.alias !== 'n/a') {
+          artists.push(info.artist.alias);
+        }
+      }
+      if (artists.length === 0 && info.guessed_artist) {
+        if (Array.isArray(info.guessed_artist)) {
+          info.guessed_artist.forEach(a => {
+            if (a.alias && a.alias !== 'n/a') artists.push(a.alias);
+          });
+        } else if (info.guessed_artist.alias && info.guessed_artist.alias !== 'n/a') {
+          artists.push(info.guessed_artist.alias);
+        }
+      }
+      artistName = artists.join(", ");
+    }
+    
+    if (artistName && typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent('player:tma-artist', {
+        detail: { artist: artistName }
+      }));
+    }
+  }
+);
+
+onBeforeUnmount(() => {
+  clearPoll();
+});
+
+
 
 const updateFromState = (state) => {
   if (!state || typeof state !== "object") return;
@@ -154,9 +264,7 @@ const updateFromState = (state) => {
   if (typeof state.gameUrl === "string") {
     gameUrl.value = state.gameUrl;
   }
-  if (typeof state.modArchiveUrl === "string") {
-    modArchiveUrl.value = state.modArchiveUrl;
-  }
+
   if (typeof state.isPlaying === "boolean") {
     isPlaying.value = state.isPlaying;
   }
@@ -259,6 +367,7 @@ const preventWhenMissing = (href, event) => {
 onMounted(() => {
   syncFromWindowState();
   if (typeof window === "undefined") return;
+  window.__tmaCache = tmaCache.value;
   window.addEventListener("player:track-change", handleTrackChange);
   window.addEventListener("player:track-loading", handleTrackLoading);
   window.addEventListener("player:track-meta", handleTrackMeta);
@@ -296,7 +405,6 @@ onBeforeUnmount(() => {
         <header class="player-header">
           <div class="player-chips">
             <span class="chip chip-track">{{ displayTrackNumber }}</span>
-            <span class="chip chip-mode">{{ modeLabel }}</span>
           </div>
 
           <nav class="player-actions" :aria-label="t('player.actionsAria')">
@@ -357,35 +465,6 @@ onBeforeUnmount(() => {
             </a>
             -->
 
-            <a
-              class="action-link"
-              :class="{ 'is-disabled': !actionArchiveHref }"
-              :href="actionArchiveHref || '#'"
-              target="_blank"
-              rel="noopener noreferrer"
-              :aria-label="t('player.actionArchiveAria')"
-              :aria-disabled="!actionArchiveHref"
-              @click="preventWhenMissing(actionArchiveHref, $event)"
-            >
-              <svg
-                class="action-icon"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.8"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                aria-hidden="true"
-              >
-                <path d="M10 14 21 3" />
-                <path d="M21 3h-7" />
-                <path d="M21 3v7" />
-                <path
-                  d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"
-                />
-              </svg>
-              <span class="action-text">{{ t("player.archive") }}</span>
-            </a>
 
             <button
               class="action-link"
@@ -648,12 +727,6 @@ onBeforeUnmount(() => {
 
     <ClientOnly>
       <section id="pattern" class="pattern-panel reveal delay-2 player-pattern">
-        <div class="pattern-header">
-          <div class="pattern-title">{{ t("player.patternTitle") }}</div>
-          <span class="badge text-[0.65rem]">{{
-            t("player.trackerViewBadge")
-          }}</span>
-        </div>
         <div id="patternhighlight" class="pattern-highlight"></div>
         <div id="patternview" class="pattern-view"></div>
       </section>
@@ -712,9 +785,6 @@ onBeforeUnmount(() => {
   background: rgba(37, 99, 235, 0.06);
 }
 
-.chip-mode {
-  color: var(--text);
-}
 
 .player-actions {
   display: flex;
@@ -974,21 +1044,6 @@ onBeforeUnmount(() => {
   display: grid;
 }
 
-.pattern-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  margin-bottom: 1rem;
-}
-
-.pattern-title {
-  font-size: 0.86rem;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text);
-}
 
 .pattern-highlight:empty {
   display: none;
