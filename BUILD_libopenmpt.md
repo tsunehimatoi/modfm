@@ -25,7 +25,7 @@ public/script/
 
 ## 前置条件
 
-- Emscripten SDK：正确安装 Emscripten，并且 `em++` 命令行工具在当前系统的 PATH 环境变量中可用
+- Emscripten SDK：`/root/emsdk`
 - Node.js ≥ 18
 
 ## 构建步骤
@@ -39,14 +39,14 @@ make -j$(nproc)
 
 产出：`.libs/libopenmpt.a`（LLVM bitcode 静态库）
 
-> `make` 会自动使用 `em++` 作为编译器（configure 时已绑定了 Emscripten 环境的 C++ 编译器）。
+> make 会自动使用 `/root/emsdk/upstream/emscripten/em++` 作为编译器（configure 时已设置）。
 >
 > **注意：** `waveform_processor.c` 已经被 `Sndfile.cpp` 通过 `#include` 直接引入，**不要**单独编译成 `.o` 注入，否则会造成重复符号导致 WASM 崩溃。
 
 ### Step 2：链接生成 WASM 胶水文件
 
 ```bash
-em++ -O3 \
+/root/emsdk/upstream/emscripten/em++ -O3 \
   -s EXPORTED_FUNCTIONS='["_openmpt_module_create_from_memory","_openmpt_module_destroy","_openmpt_module_read_float_stereo","_openmpt_module_get_num_channels","_openmpt_module_get_channel_name","_openmpt_module_get_num_instruments","_openmpt_module_get_instrument_name","_openmpt_module_get_num_samples","_openmpt_module_get_sample_name","_openmpt_module_get_num_orders","_openmpt_module_get_order_name","_openmpt_module_get_order_pattern","_openmpt_module_get_num_patterns","_openmpt_module_get_pattern_name","_openmpt_module_get_pattern_num_rows","_openmpt_module_get_pattern_row_channel_command","_openmpt_module_get_num_subsongs","_openmpt_module_get_subsong_name","_openmpt_module_select_subsong","_openmpt_module_get_duration_seconds","_openmpt_module_get_position_seconds","_openmpt_module_set_position_seconds","_openmpt_module_set_position_order_row","_openmpt_module_get_current_order","_openmpt_module_get_current_pattern","_openmpt_module_get_current_row","_openmpt_module_get_current_channel_vu_left","_openmpt_module_get_current_channel_vu_right","_openmpt_module_set_repeat_count","_openmpt_module_set_render_param","_openmpt_module_ctl_set","_openmpt_module_get_metadata","_openmpt_module_get_metadata_keys","_openmpt_get_string","_openmpt_free_string","_openmpt_module_get_channel_waveform","_malloc","_free"]' \
   -s EXPORTED_RUNTIME_METHODS='["HEAP8","HEAPU8","HEAP16","HEAPF32","stackSave","stackAlloc","stackRestore","UTF8ToString","lengthBytesUTF8","stringToUTF8"]' \
   -s WASM=1 \
@@ -69,7 +69,7 @@ em++ -O3 \
 ### Step 3：合并打包
 
 ```bash
-cd [项目根目录]
+cd ..
 node chiptune/pack.js
 ```
 
@@ -94,7 +94,7 @@ npx nuxi build && \
 
 ```bash
 cd libopenmpt && make -j$(nproc) && \
-  em++ -O3 \
+  /root/emsdk/upstream/emscripten/em++ -O3 \
     -s EXPORTED_FUNCTIONS='["_openmpt_module_create_from_memory","_openmpt_module_destroy","_openmpt_module_read_float_stereo","_openmpt_module_get_num_channels","_openmpt_module_get_channel_name","_openmpt_module_get_num_instruments","_openmpt_module_get_instrument_name","_openmpt_module_get_num_samples","_openmpt_module_get_sample_name","_openmpt_module_get_num_orders","_openmpt_module_get_order_name","_openmpt_module_get_order_pattern","_openmpt_module_get_num_patterns","_openmpt_module_get_pattern_name","_openmpt_module_get_pattern_num_rows","_openmpt_module_get_pattern_row_channel_command","_openmpt_module_get_num_subsongs","_openmpt_module_get_subsong_name","_openmpt_module_select_subsong","_openmpt_module_get_duration_seconds","_openmpt_module_get_position_seconds","_openmpt_module_set_position_seconds","_openmpt_module_set_position_order_row","_openmpt_module_get_current_order","_openmpt_module_get_current_pattern","_openmpt_module_get_current_row","_openmpt_module_get_current_channel_vu_left","_openmpt_module_get_current_channel_vu_right","_openmpt_module_set_repeat_count","_openmpt_module_set_render_param","_openmpt_module_ctl_set","_openmpt_module_get_metadata","_openmpt_module_get_metadata_keys","_openmpt_get_string","_openmpt_free_string","_openmpt_module_get_channel_waveform","_malloc","_free"]' \
     -s EXPORTED_RUNTIME_METHODS='["HEAP8","HEAPU8","HEAP16","HEAPF32","stackSave","stackAlloc","stackRestore","UTF8ToString","lengthBytesUTF8","stringToUTF8"]' \
     -s WASM=1 -s ENVIRONMENT="web,worker" -s SINGLE_FILE=1 -s EXPORT_ES6=1 \
@@ -103,6 +103,24 @@ cd libopenmpt && make -j$(nproc) && \
   cd .. && node chiptune/pack.js && npx nuxi build && \
   cp public/script/chiptune3.worklet.js public/script/libopenmpt.worklet.js .output/public/script/
 ```
+
+## 之前构建失败的教训
+
+| 错误 | 原因 | 修复 |
+|------|------|------|
+| `Aborted(OOM)` | 缺少 `ALLOW_MEMORY_GROWTH` | 添加 `-s ALLOW_MEMORY_GROWTH=1 -s INITIAL_MEMORY=64MB -s MAXIMUM_MEMORY=128MB` |
+| 卡在"正在加载歌曲..."（有声音） | `EXPORTED_RUNTIME_METHODS` 缺少 `stackSave/UTF8ToString` 等 | 补全 6 个运行时方法 |
+| 波形冻结 + 重复符号 | 单独编译了 `waveform_processor.o` 注入 `.a` | 删除此步骤（已被 `#include` 引入） |
+
+## 调试
+
+在浏览器控制台中，worklet 会随机打印调试信息（5% 概率）：
+
+```
+[Worklet Debug] Channel X active! wfOutPtr: ... Waveform head: [...] intensity: ...
+```
+
+看到此日志表示 C→WASM→JS 数据链路畅通。
 
 ## 相关文件
 

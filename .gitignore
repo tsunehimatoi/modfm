@@ -22,3 +22,28 @@ logs
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
+
+# Local env files
+.env
+.env.*
+
+# C/C++ compilation intermediates (libopenmpt build outputs)
+*.o
+*.lo
+*.la
+*.Po
+*.Plo
+.deps/
+.libs/
+Makefile
+config.log
+config.status
+libtool
+stamp-h1
+.dirstamp
+autom4te.cache/
+*.pc
+Doxyfile
+The Mod Archive XML Tool. Document 1.7.md
+.codex/
+
