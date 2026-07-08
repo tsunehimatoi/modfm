@@ -1,7 +1,7 @@
 <script setup>
 import { computed, ref, watch } from "vue";
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 
 const props = defineProps({
   isOpen: Boolean,
@@ -102,6 +102,32 @@ const formatDuration = (sec) => {
   return `${m}:${s.toString().padStart(2, "0")}`;
 };
 
+/**
+ * 将 TMA 日期字符串（如 "Fri 1st Jul 2005"）转换为本地化日期
+ * 在中文 locale 下会显示为 "2005年7月1日星期五"
+ */
+function formatTmaDate(dateStr) {
+  if (!dateStr) return dateStr;
+  // 尝试解析英文日期字符串，先去掉序数词后缀 (st/nd/rd/th)
+  const cleaned = dateStr.replace(/(\d+)(st|nd|rd|th)/i, "$1");
+  const parsed = new Date(cleaned);
+  if (isNaN(parsed.getTime())) return dateStr; // 解析失败则原样返回
+
+  // 判断是否为中文类 locale
+  const loc = locale.value || "en";
+  const isZh = /^zh|^yue/i.test(loc);
+  if (!isZh) return dateStr; // 非中文语言直接返回原始字符串
+
+  // 映射 locale 到 Intl 支持的语言标签
+  const intlLocale = loc === "yue" ? "zh-HK" : loc;
+  return new Intl.DateTimeFormat(intlLocale, {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    weekday: "long",
+  }).format(parsed);
+}
+
 const metaRows = computed(() => {
   const m = props.meta;
   const tma = tmaData.value;
@@ -133,7 +159,7 @@ const metaRows = computed(() => {
   // 5. 收录日期 (Date)：TMA 优先
   const dateVal = tma?.date || m.date;
   if (dateVal) {
-    rows.push({ label: t("trackInfo.date"), value: dateVal });
+    rows.push({ label: t("trackInfo.date"), value: formatTmaDate(dateVal) });
   }
 
   // 6. 时长与其它容器信息
