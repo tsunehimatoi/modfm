@@ -5,7 +5,7 @@ import en from "./locales/en.json";
 import manifest from "./manifest.json";
 
 // ── Vite glob: lazy-load all locale JSON files ────────────────────────
-const localeModules = import.meta.glob("./locales/*.json", {
+const localeModules = import.meta.glob(["./locales/*.json", "!./locales/en.json"], {
   import: "default",
 });
 

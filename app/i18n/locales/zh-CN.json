@@ -486,7 +486,10 @@
     "pattern": "模式",
     "container": "容器",
     "duration": "时长",
-    "orders": "订单"
+    "orders": "播放顺序",
+    "tabMeta": "元数据",
+    "tabStructure": "结构与顺序",
+    "tabInstruments": "乐器与采样"
   },
   "pattern": {
     "channel": "频道"

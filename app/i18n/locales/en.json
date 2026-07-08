@@ -500,7 +500,10 @@
     "instruments": "Instruments",
     "samples": "Samples",
     "orders": "Orders",
-    "pattern": "Pat"
+    "pattern": "Pat",
+    "tabMeta": "Metadata",
+    "tabStructure": "Structure",
+    "tabInstruments": "Instruments & Samples"
   },
   "infoSidebar": {
     "ear": {

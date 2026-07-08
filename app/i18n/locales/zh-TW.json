@@ -474,7 +474,7 @@
   },
   "trackInfo": {
     "tracker": "追蹤器",
-    "orders": "訂單",
+    "orders": "播放順序",
     "samples": "樣本數",
     "modalTitle": "音軌資訊",
     "instruments": "樂器",
@@ -489,7 +489,10 @@
     "pattern": "模式",
     "date": "日期",
     "close": "關閉",
-    "type": "類型"
+    "type": "類型",
+    "tabMeta": "元數據",
+    "tabStructure": "結構与順序",
+    "tabInstruments": "樂器與採樣"
   },
   "history": {
     "cleared": "歷史記錄已清除！"
