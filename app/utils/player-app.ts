@@ -1287,6 +1287,15 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
 
         const res = await nuxtFetch(`/api/songs?${params.toString()}`);
 
+        if (res.songs && Array.isArray(res.songs) && typeof window !== "undefined") {
+          const cache = (window as any).__tmaCache || {};
+          res.songs.forEach((song: any) => {
+            if (song.tma_metadata && song.fn) {
+              cache[song.fn] = song.tma_metadata;
+            }
+          });
+        }
+
         serverTotalItems = res.total;
         serverTotalPages = res.totalPages;
         currentPage = res.page;
@@ -3976,6 +3985,8 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
         return canvas.toDataURL('image/png');
       };
 
+      let currentSessionArtist = '';
+
       const updateMediaSessionMetadata = (title: string, artist: string) => {
         const artworkUrl = generateAsciiArtworkImage(title, artist);
         navigator.mediaSession.metadata = new MediaMetadata({
@@ -3991,6 +4002,7 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
       window.addEventListener('player:track-change', (e: any) => {
         const detail = e.detail || {};
         const title = detail.songTitle || detail.fileName || '';
+        currentSessionArtist = '';
         updateMediaSessionMetadata(title, '');
       });
 
@@ -3998,7 +4010,20 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
         const detail = e.detail || {};
         const title = detail.title || window.__playerUiState?.songTitle || window.__playerUiState?.fileName || '';
         const artist = detail.artist || '';
-        updateMediaSessionMetadata(title, artist);
+        if (!currentSessionArtist) {
+          currentSessionArtist = artist;
+        }
+        updateMediaSessionMetadata(title, currentSessionArtist);
+      });
+
+      window.addEventListener('player:tma-artist', (e: any) => {
+        const detail = e.detail || {};
+        const artist = detail.artist || '';
+        if (artist) {
+          currentSessionArtist = artist;
+          const title = window.__playerUiState?.songTitle || window.__playerUiState?.fileName || '';
+          updateMediaSessionMetadata(title, currentSessionArtist);
+        }
       });
 
       window.addEventListener('player:play-state', (e: any) => {

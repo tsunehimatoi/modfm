@@ -24,12 +24,19 @@ if (error.value || !data.value?.fileName) {
 }
 
 const fileName = data.value.fileName;
+const tmaCache = useState("tmaCache", () => ({}));
+if (data.value.tma_metadata) {
+  tmaCache.value[fileName] = data.value.tma_metadata;
+}
 const activeSong = useState("activeSong", () => null);
 activeSong.value = {
   id: parsedId,
   fileName: fileName,
   title: formatSongTitle(fileName),
+  artist: data.value.artist,
+  tma_metadata: data.value.tma_metadata,
 };
+
 const rawFileParam = Array.isArray(route.params.songFileName)
   ? route.params.songFileName[0]
   : route.params.songFileName;
