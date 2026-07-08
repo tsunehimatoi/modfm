@@ -2,6 +2,7 @@
 import type { NuxtApp } from '#app';
 import { $fetch as ofetch } from 'ofetch';
 import { ScopeWebGLRenderer, PatternWebGLRenderer, showWebGLErrorBanner } from './webgl-visualizer';
+import { MidiParser, MidiSynthPlayer } from './midi-player';
 
 declare const JSONH: {
   parse(text: string): unknown;
@@ -1679,6 +1680,12 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
       var chiptune3Scrubbing = false;
       var chiptune3WasPlaying = false;
 
+      // ─── MIDI 引擎播放状态 ──────────────────────────────────────────
+      var isMidiMode = false;
+      var midiPlayer: any = null;
+      var midiScrubbing = false;
+      var midiWasPlaying = false;
+
       class DummyAnalyser {
         _fftSize: number;
         smoothingTimeConstant: number;
@@ -2130,6 +2137,7 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
         percentage = 0; // 新歌从0进度开始，避免显示旧引擎残留百分比
         cleanupChiptune3();
         cleanupNativeAudio();
+        cleanupMidi();
         if (typeof BassoonTracker !== 'undefined' && BassoonTracker.isPlaying()) {
           BassoonTracker.stop();
         }
@@ -2226,12 +2234,44 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
         (window as any).__nativeNormMeasurer = null;
       }
 
+      function cleanupMidi() {
+        midiScrubbing = false;
+        midiWasPlaying = false;
+        if (midiPlayer) {
+          try {
+            midiPlayer.stop();
+          } catch (e) {
+            console.warn("Error stopping MIDI player:", e);
+          }
+          midiPlayer = null;
+        }
+        if (midiVolumeGain) {
+          try {
+            midiVolumeGain.disconnect();
+          } catch (e) {}
+          midiVolumeGain = null;
+        }
+        isMidiMode = false;
+        (window as any).__channelAnalysers = [];
+        emitPlayerUiEvent("channels-ready", { count: 0 });
+        _normGainNode = btNormGainNode;
+        _normMeasurer = btMeasurerNode;
+      }
+
       // native 音频模式下同步音量到 gainNode
       function syncNativeVolume() {
         if (!nativeAudioGain || !volumeBar) return;
         var vol = Number(volumeBar.value) / 100;
         nativeAudioGain.gain.cancelScheduledValues(0);
         nativeAudioGain.gain.setValueAtTime(vol, 0);
+      }
+
+      var midiVolumeGain = null;
+      function syncMidiVolume() {
+        if (!midiVolumeGain || !volumeBar) return;
+        var vol = Number(volumeBar.value) / 100;
+        midiVolumeGain.gain.cancelScheduledValues(0);
+        midiVolumeGain.gain.setValueAtTime(vol, 0);
       }
 
       function startNativeAudioRaf() {
@@ -2269,6 +2309,7 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
       function playNativeAudio(url) {
         // 1. 清理旧 native 音频（不调用 BassoonTracker.stop，避免干扰音频图）
         cleanupNativeAudio();
+        cleanupMidi();
         percentage = 0; // 新歌从0进度开始，避免显示旧引擎残留百分比
         // 停止 BassoonTracker 播放（不调 stop，防止其断开音频节点）
         if (typeof BassoonTracker !== 'undefined' && BassoonTracker.isPlaying()) {
@@ -2477,6 +2518,172 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
         audio.src = url;
         audio.load();
       }
+
+      function playMidi(url: string) {
+        if (progressBar) progressBar.value = '0';
+        midiScrubbing = false;
+        midiWasPlaying = false;
+        lastPatternRender = 0;
+        percentage = 0;
+
+        cleanupChiptune3();
+        cleanupNativeAudio();
+        cleanupMidi();
+
+        if (typeof BassoonTracker !== 'undefined' && BassoonTracker.isPlaying()) {
+          BassoonTracker.stop();
+        }
+
+        var ctx = BassoonTracker.audio.context;
+        if (ctx && ctx.state === 'suspended') {
+          ctx.resume();
+        }
+
+        isMidiMode = true;
+        isChiptune3Mode = true; // 开启 Chiptune3Mode 视图支持，以便复用多通道示波器与 Pattern 滚动
+        firstplay = true;
+        currentNormGain = 1.0;
+        isTrackReady = false;
+        pendingUrl = url;
+        emitPlayerUiEvent('track-loading', { isTrackLoading: true });
+        cleanupPatternGL();
+        if (patternView) patternView.innerHTML = '';
+        var patternElement = document.getElementById('pattern');
+        if (patternElement) patternElement.classList.remove('loaded');
+
+        var fileNameMid = url.substring(url.lastIndexOf('/') + 1).split('?')[0];
+        fileNameplaying = fileNameMid;
+        fileExtensionPlaying = fileNameMid.substring(fileNameMid.lastIndexOf('.') + 1);
+        titlekeyWords = fileNameMid + '\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0';
+
+        var curPlayItem = playlistdata ? playlistdata.find(function (item) { return item.fn === fileNameMid; }) : null;
+        numno = currentPlayTrackId || (curPlayItem ? curPlayItem.id : '');
+        listNo = matchedData ? matchedData.findIndex(function (item) { return item.fn === fileNameMid; }) : -1;
+
+        var downloadUrl = url;
+        var gameUrl = '/music/musicGame/?ml=\'' + encodeURIComponent(fileNameMid) + "'";
+        var modArchiveUrl = 'https://modarchive.org/index.php?request=search&query=' +
+          encodeURIComponent(fileNameMid) + '&submit=Find&search_type=filename_or_songtitle';
+
+        fetch(url)
+          .then(function (res) { return res.arrayBuffer(); })
+          .then(function (buf) {
+            if (!isMidiMode || pendingUrl !== url) return;
+
+            // 1. 解析 MIDI 并生成 Tracker pattern 结构
+            const parsed = MidiParser.parse(buf);
+
+            // 2. 初始化 16 虚拟通道并通知 UI 准备示波器
+            const dummyChannels = [];
+            for (let i = 0; i < 16; i++) {
+              dummyChannels.push({
+                analyser: new DummyAnalyser(),
+                chain: null
+              });
+            }
+            (window as any).__channelAnalysers = dummyChannels;
+            emitPlayerUiEvent("channels-ready", { count: 16 });
+
+            currentSong = parsed.song;
+
+            // 3. 创建音量节点并接入全局响度均衡节点中
+            midiVolumeGain = ctx.createGain();
+            midiVolumeGain.gain.value = volumeBar ? (Number(volumeBar.value) / 100) : 1;
+            midiVolumeGain.connect(btNormGainNode);
+
+            // 4. 启动合成器播放
+            midiPlayer = new MidiSynthPlayer(ctx, midiVolumeGain, parsed);
+
+            midiPlayer.onProgress = function (data) {
+              if (midiScrubbing) return;
+              var dur = midiPlayer.duration || 0;
+              var current = data.pos || 0;
+              var pct = dur > 0 ? (current / dur) * 100 : 0;
+              percentage = pct;
+
+              if (progressBar) progressBar.value = String(pct);
+              var now = Date.now();
+              if (now - lastProgressEmit > 150) {
+                emitPlayerUiEvent('progress-change', { progress: pct, isScrubbing: false });
+                var elapsedSec = Math.floor(current);
+                var durationSec = Math.floor(dur);
+                var remainSec = Math.max(0, durationSec - elapsedSec);
+                emitPlayerUiEvent('time-update', {
+                  elapsedSeconds: elapsedSec,
+                  durationSeconds: durationSec,
+                  remainingSeconds: remainSec,
+                });
+                lastProgressEmit = now;
+              }
+
+              // 对 16 通道 VU 音量进行指数衰减
+              var analysers = (window as any).__channelAnalysers;
+              if (analysers) {
+                for (var i = 0; i < analysers.length; i++) {
+                  if (analysers[i].analyser.vuVal > 0.005) {
+                    analysers[i].analyser.vuVal *= 0.88;
+                  } else {
+                    analysers[i].analyser.vuVal = 0;
+                  }
+                }
+              }
+
+              // 驱动 Pattern 网格同步滚动
+              if (currentSong && currentSong.typeId === 'midi') {
+                var pNow = Date.now();
+                if (pNow - lastPatternRender > 100) {
+                  renderPattern({
+                    songPos: data.order,
+                    patternPos: data.row
+                  });
+                  lastPatternRender = pNow;
+                }
+              }
+            };
+
+            midiPlayer.onEnded = function () {
+              isPlayingUi = false;
+              if (playButton) playButton.innerHTML = t('player.play', null, 'Play');
+              emitPlayerUiEvent('play-state', { isPlaying: false });
+              toNewSong();
+            };
+
+            // 5. 报告 UI 歌曲就绪并拉起播放
+            isTrackReady = true;
+            if (songName) songName.innerHTML = currentSong.title;
+            if (notitle) notitle.innerHTML = t('player.trackNumber', { number: numno }, 'No. {number}');
+            if (currentfileName) currentfileName.innerHTML = '';
+            
+            updateHeart();
+            updateTrackUrl(numno, fileNameMid);
+            addToHistory(fileNameMid);
+
+            emitPlayerUiEvent('track-change', {
+              trackNumber: numno,
+              songTitle: currentSong.title,
+              fileName: fileNameMid,
+              fileUrl: url,
+              downloadUrl: downloadUrl,
+              gameUrl: gameUrl,
+              modArchiveUrl: modArchiveUrl,
+            });
+            emitPlayerUiEvent('track-loading', { isTrackLoading: false });
+
+            // 启动播放器
+            midiPlayer.play();
+            isPlayingUi = true;
+            if (playButton) playButton.innerHTML = t('player.pause', null, 'Pause');
+            emitPlayerUiEvent('play-state', { isPlaying: true });
+          })
+          .catch(function (err) {
+            console.error('Failed to load MIDI:', err);
+            isTrackReady = false;
+            emitPlayerUiEvent('track-loading', { isTrackLoading: false });
+            if (songName) songName.innerHTML = t('errors.requestFailed', null, 'Request failed.');
+            showToast(t('errors.requestFailed', null, 'Request failed.'), { variant: 'error', title: t('toast.error', null, 'Error'), duration: 2400 });
+          });
+      }
+
       // ─── FFmpeg 转换播放（引擎3：所有格式转为MP3后播放）───────────────
       var ffmpegFallbackActive = false; // 标记当前是否为降级到FFmpeg的播放
 
@@ -2586,6 +2793,18 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
       playItem = function (url) {
         ffmpegFallbackActive = false;
         var urlExt = url.substring(url.lastIndexOf('.') + 1).toLowerCase().split('?')[0];
+
+        if (urlExt === 'mid' || urlExt === 'midi') {
+          cleanupChiptune3();
+          cleanupNativeAudio();
+          cleanupMidi();
+          if (typeof BassoonTracker !== 'undefined' && BassoonTracker.isPlaying()) {
+            BassoonTracker.stop();
+          }
+          playMidi(url);
+          return;
+        }
+
         var engine = getEngine();
 
         // 原生音频格式始终使用原生播放（不参与引擎降级）
@@ -2641,6 +2860,7 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
       function playBassoonWithFallback(url: string) {
         cleanupNativeAudio();
         cleanupChiptune3();
+        cleanupMidi();
         stopPlay();
         resetTimeline();
         lastTimeEmit = 0;
@@ -3064,6 +3284,23 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
 
       // 进度条拖动开始：oninput 实时更新显示，不要频繁暂停音频
       progressBar.oninput = function () {
+        if (isMidiMode && midiPlayer) {
+          if (!midiScrubbing) {
+            midiScrubbing = true;
+            midiWasPlaying = midiPlayer.isPlaying;
+            if (midiWasPlaying) midiPlayer.pause();
+          }
+          var dur = midiPlayer.duration || 0;
+          var seekSec = (Number(progressBar.value) / 100) * dur;
+          updateProgressLabel(progressBar.value);
+          emitPlayerUiEvent('progress-change', { progress: Number(progressBar.value), isScrubbing: true });
+          if (dur > 0) {
+            var elapsedSec = Math.floor(seekSec);
+            var remainSec = Math.max(0, Math.floor(dur) - elapsedSec);
+            emitPlayerUiEvent('time-update', { elapsedSeconds: elapsedSec, durationSeconds: Math.floor(dur), remainingSeconds: remainSec });
+          }
+          return;
+        }
         if (isChiptune3Mode && chiptune3Player) {
           if (!chiptune3Scrubbing) {
             chiptune3Scrubbing = true;
@@ -3115,6 +3352,27 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
 
       // 拖动结束：onchange 执行实际 seek
       progressBar.onchange = function () {
+        if (isMidiMode && midiPlayer) {
+          if (!isTrackReady) {
+            midiScrubbing = false;
+            return;
+          }
+          midiScrubbing = false;
+          var dur = midiPlayer.duration || 0;
+          var targetTime = (Number(progressBar.value) / 100) * dur;
+          midiPlayer.seek(targetTime);
+          if (midiWasPlaying) {
+            midiPlayer.play();
+            isPlayingUi = true;
+            if (playButton) playButton.innerHTML = t('player.pause', null, 'Pause');
+            emitPlayerUiEvent('play-state', { isPlaying: true });
+          } else {
+            isPlayingUi = false;
+          }
+          midiWasPlaying = false;
+          emitPlayerUiEvent('progress-change', { progress: Number(progressBar.value), isScrubbing: false });
+          return;
+        }
         if (isChiptune3Mode && chiptune3Player) {
           if (!isTrackReady) {
             chiptune3Scrubbing = false;
@@ -3198,6 +3456,8 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
         btSetVolume();
         // native 音频模式下同时更新 gainNode 音量
         if (isNativeMode) syncNativeVolume();
+        // MIDI 模式下同时更新 midiVolumeGain 音量
+        if (isMidiMode) syncMidiVolume();
         emitPlayerUiEvent("volume-change", {
           volume: Number(volumeBar.value),
         });
@@ -3478,6 +3738,31 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
 
     function togglePlay() {
       if (!isTrackReady) {
+        return;
+      }
+      if (isMidiMode && midiPlayer) {
+        if (midiPlayer.isPlaying) {
+          midiPlayer.pause();
+          isPlayingUi = false;
+          if (playButton) playButton.innerHTML = t('player.play', null, 'Play');
+          emitPlayerUiEvent('play-state', { isPlaying: false });
+        } else {
+          midiScrubbing = false;
+          var ctx = BassoonTracker.audio.context;
+          var doMidiPlay = function () {
+            if (midiPlayer) {
+              midiPlayer.play();
+              isPlayingUi = true;
+              if (playButton) playButton.innerHTML = t('player.pause', null, 'Pause');
+              emitPlayerUiEvent('play-state', { isPlaying: true });
+            }
+          };
+          if (ctx && ctx.state === 'suspended') {
+            ctx.resume().then(doMidiPlay).catch(doMidiPlay);
+          } else {
+            doMidiPlay();
+          }
+        }
         return;
       }
       if (isChiptune3Mode && chiptune3Player) {
@@ -4057,6 +4342,15 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
     }
 
     function stopPlay() {
+      if (isMidiMode && midiPlayer) {
+        midiPlayer.stop();
+        isPlayingUi = false;
+        midiScrubbing = false;
+        midiWasPlaying = false;
+        if (playButton) playButton.innerHTML = t('player.play', null, 'Play');
+        emitPlayerUiEvent('play-state', { isPlaying: false });
+        return;
+      }
       if (isChiptune3Mode && chiptune3Player) {
         chiptune3Player.stop();
         isPlayingUi = false;
@@ -4557,7 +4851,9 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
                         effectString = effectHex + effectParam;
                         if (effectString === "000") effectString = "...";
 
-                        if (currentSong.typeId) {
+                        if (currentSong.typeId === "midi") {
+                          noteString = getOpenMptNoteName(note.note);
+                        } else if (currentSong.typeId) {
                           const baseNote = periodNoteTable[note.period];
                           noteString = baseNote ? baseNote.name : "---";
                         } else {
@@ -4666,7 +4962,9 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
                 let effectString = effectHex + effectParam;
                 if (effectString === "000") effectString = "...";
 
-                if (currentSong.typeId) {
+                if (currentSong.typeId === "midi") {
+                  noteString = getOpenMptNoteName(note.note);
+                } else if (currentSong.typeId) {
                   const baseNote = periodNoteTable[note.period];
                   noteString = baseNote ? baseNote.name : "---";
                 } else {
@@ -4872,7 +5170,9 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
       let effectString = effectHex + effectParam;
       if (effectString === "000") effectString = "...";
 
-      if (currentSong.typeId) {
+      if (currentSong.typeId === "midi") {
+        noteString = getOpenMptNoteName(note.note);
+      } else if (currentSong.typeId) {
         const baseNote = periodNoteTable[note.period];
         noteString = baseNote ? baseNote.name : "---";
       } else {

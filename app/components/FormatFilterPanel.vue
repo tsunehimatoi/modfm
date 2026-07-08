@@ -11,10 +11,10 @@ const CHIPTUNE3_ALL_EXTS = [
   "667", "cba", "digi", "dmf", "dsym", "etx", "fc", "fc13", "fc14", "fmt", "ftm",
   "gmc", "gt2", "gtk", "ice", "ims", "m15", "mms", "mus", "oxm", "plm", "pt36",
   "puma", "rtm", "smod", "st26", "stk", "wow", "xmf",
-  "mdz", "s3z", "xmz", "itz", "mptmz", "mdr",
+  "mdz", "s3z", "xmz", "itz", "mptmz", "mdr", "mid", "midi",
 ];
 
-// 引擎标签: bc=Bassoon+Chiptune3, c=Chiptune3, n=Native, f=FFmpeg
+// 引擎标签: bc=Bassoon+Chiptune3, c=Chiptune3, m=Midi, n=Native, f=FFmpeg
 const ENGINE_TAG_MAP = {
   xm: "bc", mod: "bc",
   it: "c", s3m: "c", umx: "c", mptm: "c", stm: "c", mtm: "c", ptm: "c",
@@ -27,10 +27,11 @@ const ENGINE_TAG_MAP = {
   mus: "c", oxm: "c", plm: "c", pt36: "c", puma: "c", rtm: "c", smod: "c",
   st26: "c", stk: "c", wow: "c", xmf: "c", mdz: "c", s3z: "c", xmz: "c",
   itz: "c", mptmz: "c", mdr: "c",
+  mid: "m", midi: "m",
   mp3: "n", ogg: "n", wav: "n", flac: "n",
 };
 
-const ENGINE_LABELS = { bc: "B,C", c: "C", n: "N", f: "F" };
+const ENGINE_LABELS = { bc: "B,C", c: "C", m: "M", n: "N", f: "F" };
 
 // ─── 预设 ───
 const PRESETS = {
@@ -66,7 +67,7 @@ const mergedFormats = computed(() => {
 });
 
 // 按引擎支持顺序排列：B,C → C → N → F，同组按数量降序
-const ENGINE_ORDER = { bc: 0, c: 1, n: 2, f: 3 };
+const ENGINE_ORDER = { bc: 0, c: 1, m: 2, n: 3, f: 4 };
 const sortedFormats = computed(() => {
   return [...mergedFormats.value].sort((a, b) => {
     const oa = ENGINE_ORDER[a.engine] ?? 4;
