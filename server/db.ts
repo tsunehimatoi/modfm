@@ -4,7 +4,20 @@ import Database from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
-const dataDir = join(process.cwd(), 'data');
+let dataDir = process.env.DB_DATA_DIR;
+if (!dataDir) {
+  try {
+    const config = useRuntimeConfig();
+    if (config && config.dbDataDir) {
+      dataDir = config.dbDataDir;
+    }
+  } catch (e) {
+    // Ignore error if useRuntimeConfig is not yet available during initialization
+  }
+}
+if (!dataDir) {
+  dataDir = join(process.cwd(), 'data');
+}
 mkdirSync(dataDir, { recursive: true });
 
 const db = new Database(join(dataDir, 'app.sqlite'));

@@ -7,10 +7,13 @@ import { readFileSync, unlinkSync } from 'node:fs';
 import { createError } from 'h3';
 
 const execFileAsync = promisify(execFile);
-const MUSIC_BASE_PATH = '/nvme1/collectedmod';
 const CONVERTIBLE_EXTS = new Set(['xm', 'mod', 'it', 's3m', 'umx', 'mptm', 'stm', 'mtm', 'ptm', 'far', 'ult', '669', 'amf', 'dsm', 'mdl', 'med', 'okt', 'psm', 'dbm', 'imf', 'j2b', 'mo3', 'gdm', 'stp', 'sfx', 'sfx2', 'itp', 'dtm', 'mt2', 'symmod', 'c67', 'ams', 'stx', '667', 'cba', 'digi', 'dmf', 'dsym', 'etx', 'fc', 'fc13', 'fc14', 'fmt', 'ftm', 'gmc', 'gt2', 'gtk', 'ice', 'ims', 'm15', 'mms', 'mus', 'oxm', 'plm', 'pt36', 'puma', 'rtm', 'smod', 'st26', 'stk', 'wow', 'xmf', 'mdz', 's3z', 'xmz', 'itz', 'mptmz', 'mdr']);
 
 export default defineEventHandler(async (event) => {
+  const config = useRuntimeConfig(event);
+  const musicBasePath = config.musicPath || process.env.MUSIC_PATH || './data/music';
+  const ffmpegPath = config.ffmpegPath || process.env.FFMPEG_PATH || 'ffmpeg';
+
   const query = getQuery(event);
   const pathParam = query.path as string;
 
@@ -20,9 +23,9 @@ export default defineEventHandler(async (event) => {
 
   const decodedPath = decodeURIComponent(pathParam);
   const requestedPath = normalize(decodedPath);
-  const fullPath = resolve(join(MUSIC_BASE_PATH, requestedPath));
+  const fullPath = resolve(join(musicBasePath, requestedPath));
 
-  if (!fullPath.startsWith(resolve(MUSIC_BASE_PATH))) {
+  if (!fullPath.startsWith(resolve(musicBasePath))) {
     throw createError({ statusCode: 403, statusMessage: 'Access denied' });
   }
 
@@ -51,7 +54,7 @@ export default defineEventHandler(async (event) => {
   const tmpOut = join(tmpdir(), `tp_${Date.now()}_${Math.random().toString(36).slice(2)}.mp3`);
 
   try {
-    await execFileAsync('ffmpeg', [
+    await execFileAsync(ffmpegPath, [
       '-y',
       '-i', fullPath,
       '-q:a', '2',

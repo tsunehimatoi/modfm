@@ -62,7 +62,9 @@ The project supports runtime configuration via the following environment variabl
 
 | Variable | Description | Default | Example |
 | :--- | :--- | :--- | :--- |
-| **`MUSIC_PATH`** | Custom absolute path to scan for music files. If not specified, it defaults to the local `data/music` directory. | `[Project Root]/data/music` | `/var/music/my_mods` |
+| **`MUSIC_PATH`** | Custom absolute path to scan for music files. If not specified, it defaults to the local `data/music` directory (or `/nvme1/collectedmod` if exists). | `[Project Root]/data/music` | `/var/music/my_mods` |
+| **`DB_DATA_DIR`** | Custom directory path to store the SQLite database files. | `[Project Root]/data` | `/var/db/trackerplayer` |
+| **`FFMPEG_PATH`** | The command name or absolute path to the FFmpeg executable (used for converting tracker modules to MP3). | `ffmpeg` | `/usr/local/bin/ffmpeg` |
 | **`PORT`** | The listening port for production preview (`npm run preview`) or dev mode. | `3400` (preview) / `3401` (dev) | `8080` |
 
 ---
@@ -195,7 +197,9 @@ modfm/
 
 | 变量名 | 说明 | 默认值 | 样例 |
 | :--- | :--- | :--- | :--- |
-| **`MUSIC_PATH`** | 自定义外部音乐资源存放的绝对路径。如果不配置，系统将默认读取本地项目下的 `data/music` 文件夹。 | `[项目根目录]/data/music` | `/var/music/my_collected_mods` |
+| **`MUSIC_PATH`** | 自定义外部音乐资源存放的绝对路径。如果不配置，系统将默认读取本地项目下的 `data/music` 文件夹（若系统检测到 `/nvme1/collectedmod` 存在则会以此为默认值）。 | `[项目根目录]/data/music` | `/var/music/my_collected_mods` |
+| **`DB_DATA_DIR`** | 自定义 SQLite 数据库及相关数据文件的存储目录。 | `[项目根目录]/data` | `/var/db/trackerplayer` |
+| **`FFMPEG_PATH`** | FFmpeg 可执行程序的命令名称或绝对路径（用于将 tracker 模块音频实时转换为 MP3）。 | `ffmpeg` | `/usr/local/bin/ffmpeg` |
 | **`PORT`** | 应用在构建预览 (`npm run preview`) 或运行时的监听端口。 | `3400` (预览模式) / `3401` (开发模式) | `8080` |
 
 ---

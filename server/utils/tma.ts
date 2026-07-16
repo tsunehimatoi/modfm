@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { XMLParser } from 'fast-xml-parser';
 import db from '../db';
 
-const MUSIC_BASE_PATH = '/nvme1/collectedmod';
+
 
 /**
  * 异步计算本地文件的 MD5 哈希值
@@ -62,7 +62,19 @@ export async function fetchAndStoreTmaDataForSong(filename: string): Promise<voi
 
     // 3. 计算文件 MD5（若未计算）
     let md5 = song.md5;
-    const filePath = join(MUSIC_BASE_PATH, filename);
+    let musicBasePath = process.env.MUSIC_PATH;
+    if (!musicBasePath) {
+      try {
+        const config = useRuntimeConfig();
+        if (config && config.musicPath) {
+          musicBasePath = config.musicPath;
+        }
+      } catch (e) {}
+    }
+    if (!musicBasePath) {
+      musicBasePath = './data/music';
+    }
+    const filePath = join(musicBasePath, filename);
     if (!md5) {
       try {
         md5 = await calculateFileMd5(filePath);

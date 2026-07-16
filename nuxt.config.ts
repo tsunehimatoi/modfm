@@ -5,7 +5,10 @@ export default defineNuxtConfig({
   devServer: { port: 3401 },
   runtimeConfig: {
     tmaApiKey: process.env.TMA_API_KEY || '',
-    tmaEnableFetch: process.env.TMA_ENABLE_FETCH === 'true'
+    tmaEnableFetch: process.env.TMA_ENABLE_FETCH === 'true',
+    musicPath: process.env.MUSIC_PATH || './data/music',
+    dbDataDir: process.env.DB_DATA_DIR || './data',
+    ffmpegPath: process.env.FFMPEG_PATH || 'ffmpeg',
   },
   modules: ['@nuxtjs/tailwindcss', '@nuxtjs/color-mode'],
   colorMode: {

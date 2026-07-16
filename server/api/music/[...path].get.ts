@@ -3,11 +3,13 @@ import { basename, join, resolve, normalize } from 'node:path';
 import { createError } from 'h3';
 import { fetchAndStoreTmaDataForSong } from '../../utils/tma';
 
-// 音乐文件的基础路径
-const MUSIC_BASE_PATH = '/nvme1/collectedmod';
+
 
 export default defineEventHandler(async (event) => {
   try {
+    const config = useRuntimeConfig(event);
+    const musicBasePath = config.musicPath || process.env.MUSIC_PATH || './data/music';
+
     // 获取请求的文件路径
     const params = getRouterParams(event);
     const pathParam = params.path;
@@ -28,10 +30,10 @@ export default defineEventHandler(async (event) => {
     fetchAndStoreTmaDataForSong(filename).catch(err => {
       console.error(`[TMA] Background job error for ${filename} on music request:`, err);
     });
-    const fullPath = resolve(join(MUSIC_BASE_PATH, requestedPath));
+    const fullPath = resolve(join(musicBasePath, requestedPath));
 
     // 安全检查：确保请求的路径在基础路径内
-    const basePathResolved = resolve(MUSIC_BASE_PATH);
+    const basePathResolved = resolve(musicBasePath);
     if (!fullPath.startsWith(basePathResolved)) {
       throw createError({
         statusCode: 403,

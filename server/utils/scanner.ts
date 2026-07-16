@@ -3,8 +3,19 @@ import { join } from 'node:path';
 import db from '../db';
 import { parseMetadata } from './metadata-parser';
 
-// 音乐文件夹的基础路径
-const MUSIC_BASE_PATH = '/nvme1/collectedmod';
+// 获取音乐文件夹的基础路径
+function getMusicPath(): string {
+  let path = process.env.MUSIC_PATH;
+  if (!path) {
+    try {
+      const config = useRuntimeConfig();
+      if (config && config.musicPath) {
+        path = config.musicPath;
+      }
+    } catch (e) {}
+  }
+  return path || './data/music';
+}
 
 // 支持的前端可播放扩展名
 // 所有可播放格式：
@@ -75,7 +86,7 @@ export async function runScanAsync(forceRefresh = false) {
 
   try {
     // 1. 读取目录下的所有文件
-    const files = await readdir(MUSIC_BASE_PATH);
+    const files = await readdir(getMusicPath());
     currentStatus.totalFiles = files.length;
 
     // 2. 从数据库中拉取所有已存在的歌曲信息，进行增量比对
@@ -175,7 +186,7 @@ export async function runScanAsync(forceRefresh = false) {
         const filename = files[i];
         if (!filename) continue;
 
-        const filePath = join(MUSIC_BASE_PATH, filename);
+        const filePath = join(getMusicPath(), filename);
         try {
           const stats = await stat(filePath);
           const size = stats.size;
