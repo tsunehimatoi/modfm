@@ -133,6 +133,8 @@
     "description": "一个在线 Tracker 模块音乐播放器（支持 MOD、XM、S3M、IT 及 68+ 种音频格式），提供实时音频可视化、通道独立控制和自定义播放列表等功能。"
   },
   "player": {
+    "secureContextError": "由于浏览器安全策略限制 (非 HTTPS 或 localhost 访问)，AudioWorklet 模块无法加载。请使用安全的链接访问或使用 localhost！",
+    "audioWorkletUnsupported": "您的浏览器不支持 AudioWorklet，无法播放此类音频。",
     "play": "播放",
     "info": "信息",
     "download": "下载",

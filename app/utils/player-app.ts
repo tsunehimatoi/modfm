@@ -1925,6 +1925,38 @@ export function setupPlayerApp(nuxtApp: NuxtApp) {
           }
         }
 
+        if (!ctx.audioWorklet) {
+          var isSecure = (typeof window !== 'undefined' && 'isSecureContext' in window) ? window.isSecureContext : true;
+          var msg = isSecure
+            ? t('player.audioWorkletUnsupported', null, '您的浏览器不支持 AudioWorklet，无法播放此类音频。')
+            : t('player.secureContextError', null, '由于浏览器安全策略限制 (非 HTTPS 或 localhost 访问)，AudioWorklet 模块无法加载。请使用安全的链接访问或使用 localhost！');
+          showAlert(msg);
+          console.error(msg);
+          return {
+            load: function (url: string) {
+              console.warn('AudioWorklet is not available. Cannot load url:', url);
+            },
+            stop: function () {},
+            pause: function () {},
+            unpause: function () {},
+            seek: function (seconds: number) {},
+            setVolume: function (vol: number) {
+              gainNode.gain.value = vol;
+            },
+            on: function (name: string, handler: Function) {
+              if (!handlers[name]) handlers[name] = [];
+              handlers[name].push(handler);
+            },
+            getDuration: function () { return 0; },
+            getCurrentTime: function () { return 0; },
+            getMetadata: function () { return null; },
+            getIsPlaying: function () { return false; },
+            getGeneration: function () { return 0; },
+            getNormGainNode: function () { return normGainNode; },
+            getMeasurerNode: function () { return measurerNode; }
+          };
+        }
+
         ctx.audioWorklet.addModule('/script/chiptune3.worklet.js')
           .then(function () {
             processNode = new AudioWorkletNode(ctx, 'libopenmpt-processor', {

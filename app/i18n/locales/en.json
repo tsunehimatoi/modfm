@@ -133,6 +133,8 @@
     "pageRange": "{start}-{end} / {total}"
   },
   "player": {
+    "secureContextError": "Due to browser security restrictions (requires HTTPS or localhost), the AudioWorklet module failed to load. Please access using a secure connection or use localhost!",
+    "audioWorkletUnsupported": "Your browser does not support AudioWorklet, which is required to play this type of audio.",
     "download": "Download",
     "game": "Game",
     "archive": "Archive",
